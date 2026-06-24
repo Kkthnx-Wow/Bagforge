@@ -201,12 +201,19 @@ function Bank:UpdateTabs()
 		return
 	end
 
-	local available = 0
+	-- Show the Bank / Warband strip when two views are enabled in settings, not
+	-- only when both pass CanViewBank right now (that API can flicker false while
+	-- the settings panel is open and would hide the strip mid-slider).
+	local enabledCount = 0
 	for i = 1, #self.views do
 		local view = self.views[i]
-		if self:IsViewAvailable(view) then
-			available = available + 1
-			open.tabStrip:ShowTab(view.enabledKey)
+		if self:IsViewEnabled(view) then
+			enabledCount = enabledCount + 1
+			if self:IsViewAvailable(view) then
+				open.tabStrip:ShowTab(view.enabledKey)
+			else
+				open.tabStrip:HideTab(view.enabledKey)
+			end
 		else
 			open.tabStrip:HideTab(view.enabledKey)
 		end
@@ -214,7 +221,7 @@ function Bank:UpdateTabs()
 
 	open.tabStrip:Resize()
 	open.tabStrip:Select(open.enabledKey)
-	open.tabStrip:SetShown(available > 1)
+	open.tabStrip:SetShown(enabledCount > 1)
 	open:AnchorTabBar()
 end
 
@@ -284,13 +291,41 @@ function Bank:Sort(warband)
 end
 
 function Bank:OnSettingChanged(key)
-	self:ApplyDepositReagents()
-	local bankFrame = _G["BankFrame"]
-	local banking = bankFrame and bankFrame:IsShown()
-	if not banking then
+	if key == "depositReagents" then
+		self:ApplyDepositReagents()
+	end
+
+	if key == "showTabBar" and self.views then
+		for i = 1, #self.views do
+			self.views[i]:ApplyTabBarState()
+		end
+	end
+
+	-- Enable/disable toggles may need to swap or hide a view while banking.
+	if key == "active" or key == "warband" then
+		if self:IsBankOpen() or self:OpenView() then
+			self:OpenBanking()
+		end
 		return
 	end
-	self:OpenBanking()
+
+	-- Live layout refresh for any open Bagforge bank window (character or warband).
+	local open = self:OpenView()
+	if not open then
+		return
+	end
+
+	if key == "columns" or key == "warbandColumns" or key == "categoriesPerColumn" then
+		-- Column width changes must rebuild panel geometry; per-column masonry only
+		-- needs a layout pass (do not bump DrawEpoch or rescan — that broke the UI).
+		if key == "columns" or key == "warbandColumns" then
+			open:InvalidateLayout()
+		end
+		open:Relayout()
+		return
+	end
+
+	open:RefreshIfOpen()
 end
 
 function Bank:RegisterOptions(category, builder)

@@ -83,7 +83,6 @@ function ContainerWindow:HideInactiveCategoryContainers()
 			container:Reset()
 		end
 	end
-	wipe(active)
 end
 
 function ContainerWindow:ApplyFrameChrome(frame)

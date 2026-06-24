@@ -771,6 +771,45 @@ function View:Close()
 	end
 end
 
+function View:InvalidateLayout()
+	if self.mainContainer then
+		self.mainContainer._sig = nil
+		self.mainContainer._lastW = nil
+		self.mainContainer._lastH = nil
+	end
+	if self.categoryContainers then
+		for _, container in pairs(self.categoryContainers) do
+			container._sig = nil
+			container._lastW = nil
+			container._lastH = nil
+		end
+	end
+end
+
+--- Live settings refresh: relayout from the last scan without rescanning bags.
+--- `opts.refreshTabs` — also refresh Bank/Warband switcher + purchased tab bar
+--- (skip for masonry-only sliders; UpdateTabs was hiding the strip mid-drag).
+function View:Relayout(opts)
+	opts = opts or {}
+	if not self.open or not self.frame then
+		return
+	end
+	ns.BankSession:EnsureBankPanel(self)
+	if self.sections then
+		self:DrawLayout()
+	else
+		self:Draw()
+	end
+	self:UpdateBankFooter()
+	if opts.refreshTabs then
+		self:ApplyTabBarState()
+		local bank = ns:GetModule("Bank")
+		if bank then
+			bank:UpdateTabs()
+		end
+	end
+end
+
 function View:RefreshIfOpen()
 	if self.open then
 		self:UpdateTabBar()

@@ -1,0 +1,79 @@
+## Interface: 120000, 120001, 120005, 120007
+## Title: |cfff5c072Bag|r|cfffd9b20forge|r
+## Notes: A lightweight, modern bag replacement forged for Midnight. |n|n|cff5C8BCFDeveloper|cffffffff:|r |nJosh "|CFF7b8489Kkthnx|r" Russell|n|n|cff009cdePayPal|r|cffffffff:|r |n|cffffffffwww.paypal.me/KkthnxTV|r|n|n|cfff96854Patreon|r|cffffffff:|r |n|cffffffffwww.patreon.com/Kkthnx|r
+## Author: Bagforge
+## Version: 1.0.0
+## SavedVariables: BagforgeDB
+## SavedVariablesPerCharacter: BagforgeCharDB
+## IconTexture: 133633
+## X-Curse-Project-ID: 
+## X-Support: Midnight
+## X-Category: Inventory
+
+## Category-enUS: Kkthnx's AddOns
+## Category-deDE: Kkthnx's AddOns
+## Category-esES: Kkthnx's AddOns
+## Category-esMX: Kkthnx's AddOns
+## Category-itIT: Kkthnx's AddOns
+## Category-frFR: Kkthnx's AddOns
+## Category-ptBR: Kkthnx's AddOns
+## Category-ruRU: Kkthnx's AddOns
+## Category-koKR: Kkthnx's AddOns
+## Category-zhCN: Kkthnx's AddOns
+## Category-zhTW: Kkthnx's AddOns
+
+# ----------------------------------------------------------------------------
+# Core engine. Order matters: the engine seeds the namespace before anything
+# else consumes it, then constants/functions/database build the shared toolkit
+# that every module relies on.
+# ----------------------------------------------------------------------------
+Core\Engine.lua
+Core\Constants.lua
+Core\Functions.lua
+Core\Database.lua
+Core\Scan.lua
+Core\Search.lua
+
+# Localization (English is the fallback and must load first).
+Core\Locales\enUS.lua
+
+# Public plugin API (Bagforge.API). Loads after the DB/locale so registrations
+# can seed defaults and read strings; modules consume it at runtime.
+Core\API.lua
+
+# User-facing entry point (slash command) and the Settings-menu options panel.
+Core\Commands.lua
+Core\Options.lua
+
+# ----------------------------------------------------------------------------
+# Modules. Categories annotate scanned items, the data layer scans the bags,
+# the item button is the pooled widget the views hand out, the container is the
+# per-category panel, and the backpack is the window the player actually sees.
+# ----------------------------------------------------------------------------
+Modules\Categories.lua
+Modules\Organize.lua
+Modules\CategoryManager.lua
+Modules\Recent.lua
+Modules\Items.lua
+Modules\ItemInfo.lua
+Modules\ItemButton.lua
+Modules\Container.lua
+Modules\ContainerWindow.lua
+Modules\Tabs.lua
+Modules\BagBar.lua
+Modules\BlizzardBags.lua
+Modules\BankSession.lua
+Modules\BankView.lua
+Modules\Backpack.lua
+Modules\Bank.lua
+
+# Conveniences layered on top of the bag views.
+Modules\Transfers.lua
+Modules\Vendor.lua
+Modules\DeleteCheapest.lua
+
+# Settings page listing plugins registered through Bagforge.API.
+Modules\Plugins.lua
+
+# Optional third-party integrations (enable themselves only when present).
+Modules\Pawn.lua

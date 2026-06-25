@@ -84,6 +84,7 @@ ns:RegisterDefaults({
 		showBagBar = false,
 		categoriesPerColumn = C.Layout.DEFAULT_CATEGORIES_PER_COLUMN,
 		flashFind = true,
+		showJunkPrice = true,
 	},
 })
 
@@ -707,6 +708,7 @@ function Backpack:RegisterOptions(category, builder)
 	builder:Slider(category, self, "columns", ns.L["Columns"], ns.L["How many item columns each bag panel is wide."], C.Layout.MIN_COLUMNS, C.Layout.MAX_COLUMNS, 1)
 	builder:Checkbox(category, self, "showBagBar", ns.L["Bag Bar"], ns.L["Toggle the equipped-bag slots."])
 	builder:Checkbox(category, self, "flashFind", ns.L["Flash Find"], ns.L["Alt-click an item to highlight every matching stack in your open bags and bank."])
+	builder:Checkbox(category, self, "showJunkPrice", ns.L["Show Junk Total Price"], ns.L["Display the total gold value of all items inside the Junk category header."])
 	builder:Slider(category, self, "categoriesPerColumn", ns.L["Categories Per Column"], ns.L["How many category panels stack in a column before wrapping to a new column on the left."], C.Layout.MIN_CATEGORIES_PER_COLUMN, C.Layout.MAX_CATEGORIES_PER_COLUMN, 1)
 end
 

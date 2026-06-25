@@ -421,6 +421,42 @@ function Organize:ResetCategoryOrder()
 	return true
 end
 
+local function OpenColorPicker(categoryName, currentColor)
+	local r, g, b = 1, 0.82, 0
+	if currentColor then
+		r, g, b = currentColor[1], currentColor[2], currentColor[3]
+	end
+
+	local function apply()
+		local nr, ng, nb = ColorPickerFrame:GetColorRGB()
+		Organize:SetColor(categoryName, nr, ng, nb)
+		local manager = ns:GetModule("CategoryManager")
+		if manager and manager.Refresh then
+			manager:Refresh()
+		end
+	end
+
+	local hadColor = currentColor ~= nil
+	ColorPickerFrame:SetupColorPickerAndShow({
+		r = r,
+		g = g,
+		b = b,
+		hasOpacity = false,
+		swatchFunc = apply,
+		cancelFunc = function()
+			if hadColor then
+				Organize:SetColor(categoryName, r, g, b)
+			else
+				Organize:ClearColor(categoryName)
+			end
+			local manager = ns:GetModule("CategoryManager")
+			if manager and manager.Refresh then
+				manager:Refresh()
+			end
+		end,
+	})
+end
+
 function Organize:OpenCategoryOrderMenu(ownerFrame, categoryName, owner)
 	local categories = ns:GetModule("Categories")
 	categoryName = CleanName(categoryName)
@@ -475,6 +511,25 @@ function Organize:OpenCategoryOrderMenu(ownerFrame, categoryName, owner)
 					transfers:DepositCategory(categoryName, entries)
 				end)
 			end
+		end
+
+		-- Color picker options
+		root:CreateTitle(L["Color"])
+		local o = DB()
+		local currentColor = o and o.colors and o.colors[categoryName]
+
+		root:CreateButton(L["Change Color..."], function()
+			OpenColorPicker(categoryName, currentColor)
+		end)
+
+		if currentColor then
+			root:CreateButton(L["Reset Color"], function()
+				self:ClearColor(categoryName)
+				local manager = ns:GetModule("CategoryManager")
+				if manager and manager.Refresh then
+					manager:Refresh()
+				end
+			end)
 		end
 	end)
 end

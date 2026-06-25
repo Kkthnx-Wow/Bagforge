@@ -471,7 +471,30 @@ function methods:Layout(section, columns, opts)
 
 	if showHeader then
 		local name = section and section.name
-		self.header:SetText(name or "")
+		local text = name or ""
+		local showJunk = not ns.db or not ns.db.backpack or ns.db.backpack.showJunkPrice
+		if showJunk and name == L["Junk"] and section and section.items then
+			local totalJunkValue = 0
+			for i = 1, #section.items do
+				local entry = section.items[i]
+				local id = entry.hyperlink or entry.itemID
+				if id then
+					local sellPrice = select(11, C_Item.GetItemInfo(id))
+					if sellPrice and sellPrice > 0 then
+						totalJunkValue = totalJunkValue + (sellPrice * (entry.count or 1))
+					end
+				end
+			end
+			if totalJunkValue > 0 then
+				local GetCoinTextureString = _G["GetCoinTextureString"]
+				if GetCoinTextureString then
+					text = name .. " (" .. GetCoinTextureString(totalJunkValue) .. ")"
+				else
+					text = name .. " (" .. format("%.2fg", totalJunkValue / 10000) .. ")"
+				end
+			end
+		end
+		self.header:SetText(text)
 		-- Custom header tint (Modules/Organize): a custom/search category can
 		-- carry a colour; group-by sub-panels ("<name>: <suffix>") inherit the
 		-- parent's. Falls back to the template's default yellow.

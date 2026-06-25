@@ -558,6 +558,17 @@ local function ResetButton(parent)
 	parent:SetParent(UIParent)
 end
 
+function ItemButton:SetBagHighlight(bagID, highlight)
+	for _, parent in pairs(slotButtons) do
+		local entry = parent.entry
+		if entry and entry.bag == bagID and parent:IsShown() then
+			if parent.button.BagIndicator then
+				parent.button.BagIndicator:SetShown(highlight and true or false)
+			end
+		end
+	end
+end
+
 function ItemButton:OnEnable()
 	self.pool = F.CreatePool(CreateButton, ResetButton)
 
@@ -565,6 +576,25 @@ function ItemButton:OnEnable()
 	-- windows are open; prewarm enough that no secure button is created in combat.
 	self.pool:Prewarm(650)
 	self:ApplyOverlayLayout()
+
+	if EventRegistry then
+		EventRegistry:RegisterCallback("BagSlot.OnEnter", function(_, bagSlotButton)
+			if bagSlotButton and type(bagSlotButton.GetBagID) == "function" then
+				local bagID = bagSlotButton:GetBagID()
+				if bagID then
+					self:SetBagHighlight(bagID, true)
+				end
+			end
+		end, self)
+		EventRegistry:RegisterCallback("BagSlot.OnLeave", function(_, bagSlotButton)
+			if bagSlotButton and type(bagSlotButton.GetBagID) == "function" then
+				local bagID = bagSlotButton:GetBagID()
+				if bagID then
+					self:SetBagHighlight(bagID, false)
+				end
+			end
+		end, self)
+	end
 end
 
 function ItemButton:Acquire()

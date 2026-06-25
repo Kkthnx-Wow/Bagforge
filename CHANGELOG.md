@@ -5,6 +5,22 @@ All notable changes to Bagforge are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-06-25
+
+### Added
+
+- **Bag slot hover highlighting** — hovering over equipped bags in the Bag Bar or bank tabs in the Bank window highlights the slots belonging to that bag in the window.
+- **Blizzard bag filter settings** — right-clicking an equipped bag in the Bag Bar opens the native Blizzard filter menu to configure gear filters (Equipment, Consumables, Trade Goods, Junk) and ignore clean up/junk selling.
+- **Bank tab settings** — right-clicking a bank tab in the Bank window triggers Blizzard's native tab popup editor to rename, change icons, and customize deposit/expansion filters.
+- **Tooltip bindings & assignments** — equipped bag tooltips now display keybindings and active filters, and bank tab tooltips show deposit/expansion assignments.
+- **Junk total price display** — the Junk panel header now displays the total gold value of all items categorized as junk, complete with coin texture icons.
+- **Junk price toggle option** — added a settings checkbox under Backpack options to show or hide the junk total price display.
+- **Category title color customization** — right-clicking any category header panel opens a context menu to customize the title text color via WoW's native color picker or reset it to the default yellow.
+
+### Fixed
+
+- **Character bag title possessive grammar** — updated English localization string to correctly show possessive ownership (e.g., "Formtroll's Bags" instead of "Formtroll Bags").
+
 ## [1.0.0] - 2026-06-16
 
 ### Added
@@ -33,4 +49,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Initial public release for **World of Warcraft: Midnight** retail.
 - Replaces Blizzard's default combined-bags UI while enabled.
 
+[1.1.0]: https://github.com/Kkthnx-Wow/Bagforge/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/Kkthnx-Wow/Bagforge/releases/tag/v1.0.0

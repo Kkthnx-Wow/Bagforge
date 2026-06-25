@@ -11,7 +11,7 @@ local _, ns = ...
 local L = ns.L
 
 L["Backpack"] = "Backpack"
-L["%s Bags"] = "%s Bags"
+L["%s Bags"] = "%s's Bags"
 L["Recent Items"] = "Recent Items"
 L["Equipment"] = "Equipment"
 L["Equipment Sets"] = "Equipment Sets"
@@ -377,3 +377,8 @@ L["Options error in %s:"] = "|cffff5555Options error in %s:|r"
 L["  %s (%d)"] = "  %s |cffffffff(%d)|r"
 L["  %s = %s"] = "  %s |cffffffff= %s|r"
 L["  %s - %s"] = "  %s - %s"
+
+L["Color"] = "Color"
+L["Change Color..."] = "Change Color..."
+L["Reset Color"] = "Reset Color"
+

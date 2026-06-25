@@ -53,7 +53,67 @@ ns.ContainerWindow.Apply(View)
 local function TabSlot_OnEnter(button)
 	GameTooltip:SetOwner(button, "ANCHOR_RIGHT")
 	GameTooltip:SetText(button.tabName or L["Bank Tabs"])
+
+	-- Add deposit assignments if they exist
+	local FlagsUtil = _G["FlagsUtil"]
+	local ContainerFrameUtil_ConvertFilterFlagsToList = _G["ContainerFrameUtil_ConvertFilterFlagsToList"]
+	local GameTooltip_AddNormalLine = _G["GameTooltip_AddNormalLine"]
+	local BANK_TAB_EXPANSION_ASSIGNMENT = _G["BANK_TAB_EXPANSION_ASSIGNMENT"]
+	local BANK_TAB_EXPANSION_FILTER_CURRENT = _G["BANK_TAB_EXPANSION_FILTER_CURRENT"]
+	local BANK_TAB_EXPANSION_FILTER_LEGACY = _G["BANK_TAB_EXPANSION_FILTER_LEGACY"]
+	local BANK_TAB_DEPOSIT_ASSIGNMENTS = _G["BANK_TAB_DEPOSIT_ASSIGNMENTS"]
+
+	if button.depositFlags then
+		if FlagsUtil and FlagsUtil.IsSet then
+			if FlagsUtil.IsSet(button.depositFlags, Enum.BagSlotFlags.ExpansionCurrent) then
+				if GameTooltip_AddNormalLine and BANK_TAB_EXPANSION_ASSIGNMENT and BANK_TAB_EXPANSION_FILTER_CURRENT then
+					GameTooltip_AddNormalLine(GameTooltip, BANK_TAB_EXPANSION_ASSIGNMENT:format(BANK_TAB_EXPANSION_FILTER_CURRENT))
+				end
+			elseif FlagsUtil.IsSet(button.depositFlags, Enum.BagSlotFlags.ExpansionLegacy) then
+				if GameTooltip_AddNormalLine and BANK_TAB_EXPANSION_ASSIGNMENT and BANK_TAB_EXPANSION_FILTER_LEGACY then
+					GameTooltip_AddNormalLine(GameTooltip, BANK_TAB_EXPANSION_ASSIGNMENT:format(BANK_TAB_EXPANSION_FILTER_LEGACY))
+				end
+			end
+		end
+
+		if ContainerFrameUtil_ConvertFilterFlagsToList then
+			local filterList = ContainerFrameUtil_ConvertFilterFlagsToList(button.depositFlags)
+			if filterList and GameTooltip_AddNormalLine and BANK_TAB_DEPOSIT_ASSIGNMENTS then
+				GameTooltip_AddNormalLine(GameTooltip, BANK_TAB_DEPOSIT_ASSIGNMENTS:format(filterList), true)
+			end
+		end
+	end
+
 	GameTooltip:Show()
+
+	if button.bagID then
+		local ItemButton = ns:GetModule("ItemButton")
+		if ItemButton and ItemButton.SetBagHighlight then
+			ItemButton:SetBagHighlight(button.bagID, true)
+		end
+	end
+end
+
+local function TabSlot_OnClick(button, mouseButton)
+	if mouseButton == "RightButton" then
+		local BankFrame = _G["BankFrame"]
+		if BankFrame and BankFrame.BankTabSettingsMenu and BankFrame.BankTabSettingsMenu.OnOpenTabSettingsRequested then
+			if button.bagID then
+				BankFrame.BankTabSettingsMenu:OnOpenTabSettingsRequested(button.bagID)
+			end
+		end
+	end
+end
+
+local function TabSlot_OnLeave(button)
+	GameTooltip_Hide()
+
+	if button.bagID then
+		local ItemButton = ns:GetModule("ItemButton")
+		if ItemButton and ItemButton.SetBagHighlight then
+			ItemButton:SetBagHighlight(button.bagID, false)
+		end
+	end
 end
 
 local function SetIconButtonEnabled(button, enabled)
@@ -621,9 +681,12 @@ function View:CreateTabSlotButton(parent, index)
 	local button = CreateFrame("ItemButton", name, parent)
 	button:SetSize(TAB_SLOT_SIZE, TAB_SLOT_SIZE)
 	button.tabIndex = index
+	button.bagID = self.staticBags[index]
 	button.icon = _G[name .. "IconTexture"]
+	button:RegisterForClicks("AnyUp")
+	button:SetScript("OnClick", TabSlot_OnClick)
 	button:SetScript("OnEnter", TabSlot_OnEnter)
-	button:SetScript("OnLeave", GameTooltip_Hide)
+	button:SetScript("OnLeave", TabSlot_OnLeave)
 	return button
 end
 
@@ -647,9 +710,11 @@ function View:UpdateTabBar()
 		if data then
 			SetItemButtonTexture(button, data.icon or QUESTION_MARK_ICON)
 			button.tabName = data.name
+			button.depositFlags = data.depositFlags
 		else
 			SetItemButtonTexture(button, QUESTION_MARK_ICON)
 			button.tabName = nil
+			button.depositFlags = nil
 		end
 	end
 

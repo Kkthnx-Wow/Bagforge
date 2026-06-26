@@ -361,12 +361,23 @@ function F.TooltipThrottleEnter(button)
 end
 
 --- Install delayed tooltip show on a ContainerFrameItemButtonTemplate button.
+--- Uses SetScript (not HookScript) for OnEnter so Blizzard's handler —
+--- ContainerFrameItemButton_OnEnter → ContainerFrameItemButtonMixin:OnEnter →
+--- GameTooltip:SetBagItem — is fully replaced. This prevents the expensive
+--- tooltip build from running on every cursor entry during rapid mouse movement;
+--- instead it only fires once the throttle delay has elapsed. The stock OnLeave
+--- still runs via HookScript (it's cheap and cleans up cursor state).
 function F.InstallTooltipThrottle(button)
 	if not button or button.bfTooltipThrottle then
 		return
 	end
 	button.bfTooltipThrottle = true
-	button:HookScript("OnEnter", F.TooltipThrottleEnter)
+	-- SetScript replaces the XML-set ContainerFrameItemButton_OnEnter entirely.
+	-- Our throttle then calls ContainerFrameItemButtonMixin.OnEnter (via
+	-- ShowBagItemTooltip) only when the delay allows. HookScript would fire
+	-- AFTER the original, paying the full SetBagItem cost every enter even when
+	-- we immediately hide the tooltip.
+	button:SetScript("OnEnter", F.TooltipThrottleEnter)
 	button:HookScript("OnLeave", F.TooltipThrottleLeave)
 end
 
@@ -378,6 +389,9 @@ end
 --   pattern the bag redraw leans on. Adapted from NexEnhance's F.CreatePool.
 -- ---------------------------------------------------------------------------
 function F.CreatePool(creator, onRemoved, onAcquired)
+	-- `active` is a hash set (obj -> true) so Release is O(1) instead of O(n).
+	-- `objects` stays an array for full-pool iteration (e.g. ApplyOverlayLayout).
+	-- `free` stays a stack array for fast LIFO recycling.
 	local pool = {
 		objects = {},
 		active = {},
@@ -415,7 +429,8 @@ function F.CreatePool(creator, onRemoved, onAcquired)
 			obj.Release = objRelease
 		end
 
-		self.active[#self.active + 1] = obj
+		-- Hash-set membership: O(1) insert and O(1) remove in Release.
+		self.active[obj] = true
 		if obj.Show then
 			obj:Show()
 		end
@@ -425,23 +440,24 @@ function F.CreatePool(creator, onRemoved, onAcquired)
 		return obj
 	end
 
+	-- O(1): hash-set lookup instead of the old O(n) linear scan + tremove.
 	function pool:Release(obj)
-		local active = self.active
-		for i = 1, #active do
-			if active[i] == obj then
-				tremove(active, i)
-				reclaim(obj)
-				return
-			end
+		if self.active[obj] then
+			self.active[obj] = nil
+			reclaim(obj)
 		end
 	end
 
 	function pool:ReleaseAll()
+		-- Collect first to avoid mutating the table mid-pairs (Lua 5.1 safety).
 		local active = self.active
-		for i = #active, 1, -1 do
-			local obj = active[i]
-			active[i] = nil
-			reclaim(obj)
+		local batch = {}
+		for obj in pairs(active) do
+			batch[#batch + 1] = obj
+		end
+		for i = 1, #batch do
+			active[batch[i]] = nil
+			reclaim(batch[i])
 		end
 	end
 
@@ -458,8 +474,9 @@ function F.CreatePool(creator, onRemoved, onAcquired)
 		end
 	end
 
+	-- Returns pairs() iterator over the active hash set (obj keys, true values).
 	function pool:EnumerateActive()
-		return ipairs(self.active)
+		return pairs(self.active)
 	end
 
 	return pool
@@ -562,11 +579,21 @@ function F.AnchorOverlayCorner(overlay, parent, corner, inset)
 	local c = corner and string.lower(corner) or "bottomleft"
 	overlay:ClearAllPoints()
 	if c == "topright" then
-		overlay:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -inset, -inset)
+		overlay:SetPoint("TOPRIGHT", parent, "TOPRIGHT", inset, -inset)
 	elseif c == "bottomleft" then
 		overlay:SetPoint("BOTTOMLEFT", parent, "BOTTOMLEFT", inset, inset)
 	elseif c == "bottomright" then
-		overlay:SetPoint("BOTTOMRIGHT", parent, "BOTTOMRIGHT", -inset, inset)
+		overlay:SetPoint("BOTTOMRIGHT", parent, "BOTTOMRIGHT", inset, inset)
+	elseif c == "top" then
+		overlay:SetPoint("TOP", parent, "TOP", 0, -inset)
+	elseif c == "bottom" then
+		overlay:SetPoint("BOTTOM", parent, "BOTTOM", 0, inset)
+	elseif c == "left" then
+		overlay:SetPoint("LEFT", parent, "LEFT", inset, 0)
+	elseif c == "right" then
+		overlay:SetPoint("RIGHT", parent, "RIGHT", inset, 0)
+	elseif c == "center" then
+		overlay:SetPoint("CENTER", parent, "CENTER", 0, 0)
 	else
 		overlay:SetPoint("TOPLEFT", parent, "TOPLEFT", inset, -inset)
 	end

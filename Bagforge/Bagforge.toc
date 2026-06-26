@@ -1,11 +1,11 @@
 ## Interface: 120007
 ## Title: |cfff5c072Bag|r|cfffd9b20forge|r
-## Notes: A lightweight, modern bag replacement forged for Midnight. |n|n|cff5C8BCFDeveloper|cffffffff:|r |nJosh "|CFF7b8489Kkthnx|r" Russell|n|n|cff009cdePayPal|r|cffffffff:|r |n|cffffffffwww.paypal.me/KkthnxTV|r|n|n|cfff96854Patreon|r|cffffffff:|r |n|cffffffffwww.patreon.com/Kkthnx|r
-## Author: Bagforge
+## Notes: A lightweight, modern bag replacement forged for Midnight.|n|n|cff5C8BCFDeveloper|cffffffff:|r |nJosh "|CFF7b8489Kkthnx|r" Russell|n|n|cff009cdePayPal|r|cffffffff:|r |n|cffffffffwww.paypal.me/KkthnxTV|r|n|n|cfff96854Patreon|r|cffffffff:|r |n|cffffffffwww.patreon.com/Kkthnx|r
+## Author: Josh "|CFF7b8489Kkthnx|r" Russell
 ## Version: 1.1.0
 ## SavedVariables: BagforgeDB
 ## SavedVariablesPerCharacter: BagforgeCharDB
-## IconTexture: 133633
+## IconTexture: Interface\Addons\Bagforge\assets\Icon64.blp
 ## X-Curse-Project-ID: 
 ## X-Support: Midnight
 ## X-Category: Inventory

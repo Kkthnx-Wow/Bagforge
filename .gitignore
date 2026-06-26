@@ -13,4 +13,3 @@ Thumbs.db
 # Local secrets
 .env
 *.local
-Bagforge/stylua.toml

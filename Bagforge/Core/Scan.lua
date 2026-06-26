@@ -123,19 +123,121 @@ local function BuildSortMap(list)
 end
 
 local SORTED_CLASS = BuildSortMap({
-	18, 0, 5, 6, 2, 4, 11, 3, 8, 16, 1, 7, 19, 9, 10, 12, 13, 14, 15, 17,
+	18,
+	0,
+	5,
+	6,
+	2,
+	4,
+	11,
+	3,
+	8,
+	16,
+	1,
+	7,
+	19,
+	9,
+	10,
+	12,
+	13,
+	14,
+	15,
+	17,
 })
 local SORTED_WEAPON_SUB = BuildSortMap({
-	0, 4, 7, 9, 15, 13, 11, 12, 19, 1, 5, 8, 6, 10, 2, 18, 3, 16, 17, 14, 20,
+	0,
+	4,
+	7,
+	9,
+	15,
+	13,
+	11,
+	12,
+	19,
+	1,
+	5,
+	8,
+	6,
+	10,
+	2,
+	18,
+	3,
+	16,
+	17,
+	14,
+	20,
 })
 local SORTED_ARMOR_SUB = BuildSortMap({
-	6, 7, 8, 9, 10, 11, 4, 3, 2, 1, 0, 5,
+	6,
+	7,
+	8,
+	9,
+	10,
+	11,
+	4,
+	3,
+	2,
+	1,
+	0,
+	5,
 })
 local SORTED_TRADEGOOD_SUB = BuildSortMap({
-	18, 1, 4, 7, 6, 5, 12, 16, 10, 9, 8, 11, 0, 2, 3, 13, 14, 15, 17,
+	18,
+	1,
+	4,
+	7,
+	6,
+	5,
+	12,
+	16,
+	10,
+	9,
+	8,
+	11,
+	0,
+	2,
+	3,
+	13,
+	14,
+	15,
+	17,
 })
 local SORTED_INV_SLOT = BuildSortMap({
-	17, 13, 21, 14, 23, 26, 22, 15, 25, 24, 27, 28, 1, 3, 16, 5, 20, 9, 10, 6, 7, 8, 2, 11, 12, 4, 19, 29, 30, 18, 31, 32, 33, 34, 0,
+	17,
+	13,
+	21,
+	14,
+	23,
+	26,
+	22,
+	15,
+	25,
+	24,
+	27,
+	28,
+	1,
+	3,
+	16,
+	5,
+	20,
+	9,
+	10,
+	6,
+	7,
+	8,
+	2,
+	11,
+	12,
+	4,
+	19,
+	29,
+	30,
+	18,
+	31,
+	32,
+	33,
+	34,
+	0,
 })
 
 local function SortedLookup(map, id)
@@ -316,6 +418,11 @@ function Scan.New()
 		_sectionPool = {},
 		_sectionCount = 0,
 		sectionsByName = {},
+		-- O(1) bag/slot lookup: keyed by SlotKey(bag, slot). Rebuilt in _Build.
+		slotsByKey = {},
+		-- O(1) itemID lookup: itemID -> array of entry refs. Rebuilt in _Build.
+		-- Multiple entries can share an itemID (different stacks of the same type).
+		entriesByItemID = {},
 	}, meta)
 end
 
@@ -462,6 +569,26 @@ function meta:_Build(bags)
 	self.freeSlots = free
 	self.totalSlots = total
 
+	-- Rebuild the O(1) lookup tables after merge+sort so per-slot and per-itemID
+	-- refresh paths don't have to scan the entire slot list.
+	local byKey = self.slotsByKey
+	wipe(byKey)
+	local byID = self.entriesByItemID
+	wipe(byID)
+	for i = 1, #self.slots do
+		local e = self.slots[i]
+		byKey[e.key] = e
+		local id = e.itemID
+		if id then
+			local list = byID[id]
+			if not list then
+				list = {}
+				byID[id] = list
+			end
+			list[#list + 1] = e
+		end
+	end
+
 	return self
 end
 
@@ -555,12 +682,17 @@ function meta:Run(bags, onComplete)
 		return self
 	end
 
+	-- Only stage slots whose item data is NOT yet cached. Staging every occupied
+	-- slot (the original code) created one Item mixin object per slot — 600+
+	-- allocations on a full warband bank — even when the data was already in the
+	-- client cache and the ContinuableContainer would fire immediately anyway.
 	local container = ContinuableContainer:Create()
 	local staged = false
 	for _, bag in ipairs(bags) do
 		local numSlots = C_Container.GetContainerNumSlots(bag) or 0
 		for slot = 1, numSlots do
-			if GetContainerItemID(bag, slot) then
+			local itemID = GetContainerItemID(bag, slot)
+			if itemID and not IsItemDataCachedByID(itemID) then
 				container:AddContinuable(ItemMixinClass:CreateFromBagAndSlot(bag, slot))
 				staged = true
 			end
@@ -598,19 +730,17 @@ end
 
 --- Refresh lock state for one existing entry. Returns true if the slot was in
 --- this scanner, so callers can skip a full display repaint on lock spam.
+--- O(1) via the slotsByKey hash built at the end of _Build.
 function meta:RefreshLock(bag, slot)
-	local key = SlotKey(bag, slot)
-	for i = 1, #self.slots do
-		local entry = self.slots[i]
-		if entry.key == key then
-			local info = C_Container.GetContainerItemInfo(bag, slot)
-			if info then
-				entry.isLocked = info.isLocked and true or false
-			end
-			return true
-		end
+	local entry = self.slotsByKey[SlotKey(bag, slot)]
+	if not entry then
+		return false
 	end
-	return false
+	local info = C_Container.GetContainerItemInfo(bag, slot)
+	if info then
+		entry.isLocked = info.isLocked and true or false
+	end
+	return true
 end
 
 --- Refresh quest overlay fields without reclassifying.
@@ -626,6 +756,8 @@ end
 
 --- Refresh cached item fields after GET_ITEM_INFO_RECEIVED without a full scan.
 --- Returns true when category membership may have changed (caller should rescan).
+--- O(k) where k = number of stacks of this itemID (via entriesByItemID), not O(n)
+--- over all slots.
 function meta:RefreshItemID(itemID)
 	if not (itemID and F.NotSecret(itemID)) then
 		return false
@@ -634,34 +766,37 @@ function meta:RefreshItemID(itemID)
 	nameCache[itemID] = nil
 	expacCache[itemID] = nil
 
+	local entries = self.entriesByItemID[itemID]
+	if not entries or #entries == 0 then
+		return false
+	end
+
 	local categories = ns:GetModule("Categories")
 	local itemInfo = ns:GetModule("ItemInfo")
 	local categoryChanged = false
+	local maxStack, name, expacID = GetBasics(itemID)
 
-	for i = 1, #self.slots do
-		local entry = self.slots[i]
-		if entry.itemID == itemID then
-			local maxStack, name, expacID = GetBasics(itemID)
-			if maxStack then
-				entry.maxStack = maxStack
-			end
-			if name then
-				entry.name = name
-			end
-			if expacID then
-				entry.expacID = expacID
-			end
-			if itemInfo then
-				entry.bindLabel = itemInfo:GetBindLabel(entry)
-				entry.ilvl = itemInfo:GetItemLevel(entry)
-			end
-			if categories then
-				local cat = categories:GetCategory(entry)
-				if cat ~= entry.category then
-					entry.category = cat
-					entry.categoryOrder = categories:GetOrder(cat)
-					categoryChanged = true
-				end
+	for i = 1, #entries do
+		local entry = entries[i]
+		if maxStack then
+			entry.maxStack = maxStack
+		end
+		if name then
+			entry.name = name
+		end
+		if expacID then
+			entry.expacID = expacID
+		end
+		if itemInfo then
+			entry.bindLabel = itemInfo:GetBindLabel(entry)
+			entry.ilvl = itemInfo:GetItemLevel(entry)
+		end
+		if categories then
+			local cat = categories:GetCategory(entry)
+			if cat ~= entry.category then
+				entry.category = cat
+				entry.categoryOrder = categories:GetOrder(cat)
+				categoryChanged = true
 			end
 		end
 	end

@@ -59,6 +59,11 @@ local VALID_CORNERS = {
 	topright = true,
 	bottomleft = true,
 	bottomright = true,
+	top = true,
+	bottom = true,
+	left = true,
+	right = true,
+	center = true,
 }
 
 local function OverlayCorner(key, fallback)
@@ -507,10 +512,10 @@ local function CreateButton()
 	button.bindText = bindText
 
 	-- Pawn-style upgrade arrow (Blizzard's stock "bags-greenarrow" atlas),
-	-- anchored to the left edge. Hidden until an upgrade provider asks.
+	-- centred on the icon. Hidden until an upgrade provider asks.
 	local upgradeIcon = button:CreateTexture(nil, "OVERLAY")
 	upgradeIcon:SetSize(20, 22)
-	upgradeIcon:SetPoint("LEFT", button, "LEFT", 1, 0)
+	upgradeIcon:SetPoint("CENTER", button, "CENTER", 0, 0)
 	upgradeIcon:SetAtlas("bags-greenarrow")
 	upgradeIcon:Hide()
 	button.upgradeIcon = upgradeIcon
@@ -651,8 +656,11 @@ local CORNER_ANCHORS = {
 	topright = { "TOPRIGHT", "TOPRIGHT", -1, -1 },
 	bottomleft = { "BOTTOMLEFT", "BOTTOMLEFT", 1, 1 },
 	bottomright = { "BOTTOMRIGHT", "BOTTOMRIGHT", -1, 1 },
+	top = { "TOP", "TOP", 0, 2 },
+	bottom = { "BOTTOM", "BOTTOM", 0, -2 },
 	left = { "LEFT", "LEFT", 2, 0 },
 	right = { "RIGHT", "RIGHT", -2, 0 },
+	center = { "CENTER", "CENTER", 0, 0 },
 }
 
 local function EnsureCornerTexture(button, corner)

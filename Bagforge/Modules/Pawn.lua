@@ -124,7 +124,7 @@ function Pawn:Apply()
 			Pawn._cornerRegistered = ns.API:RegisterCornerWidget({
 				key = "pawn.upgrade",
 				source = "Pawn",
-				corner = "left",
+				corner = "center",
 				priority = 10,
 				update = function(_, entry)
 					if not entry or not entry.hyperlink then

@@ -28,7 +28,14 @@ local C_Item = C_Item
 local C_ToyBox = C_ToyBox
 local C_AzeriteEmpoweredItem = C_AzeriteEmpoweredItem
 local C_Container = C_Container
+local C_TooltipInfo = C_TooltipInfo
 local REAGENT_BAG_INDEX = Enum.BagIndex and Enum.BagIndex.ReagentBag
+
+-- Bind-detection enums mirrored from ItemInfo so IsWarbound can fall back to
+-- a direct tooltip-data check when ItemInfo hasn't populated entry.bindLabel.
+local LINE_ITEM_BINDING = Enum and Enum.TooltipDataLineType and Enum.TooltipDataLineType.ItemBinding
+local BIND = Enum and Enum.TooltipDataItemBinding
+local ITEM_BIND = Enum and Enum.ItemBind
 
 -- dbKey "filters" binds our settings to ns.db.filters (flat table) so the
 -- options builder can register each toggle directly. `enable` doubles as the
@@ -242,7 +249,45 @@ local function IsWarbound(entry)
 	if entry.isBound then
 		return false
 	end
-	return entry.bindLabel == "WuE"
+	-- Primary: ItemInfo populated bindLabel at scan time (the normal path).
+	if entry.bindLabel ~= nil then
+		return entry.bindLabel == "WuE"
+	end
+	-- Fallback: ItemInfo wasn't active or item data wasn't cached at scan time.
+	-- Mirror ItemInfo:GetBindLabel's two-stage detection so the filter still works
+	-- when the module is unavailable. We cache the positive result on the entry so
+	-- repeated calls per draw are free; a ContinuableContainer rebuild will
+	-- overwrite with the same value once ItemInfo resolves it properly.
+	if entry.bag and entry.slot and C_TooltipInfo and C_TooltipInfo.GetBagItem and BIND then
+		local data = C_TooltipInfo.GetBagItem(entry.bag, entry.slot)
+		if data and data.lines then
+			for i = 2, #data.lines do
+				local line = data.lines[i]
+				if line.type == LINE_ITEM_BINDING then
+					local bonding = line.bonding
+					if bonding == BIND.AccountUntilEquipped or bonding == BIND.BindToAccountUntilEquipped then
+						entry.bindLabel = "WuE"
+						return true
+					end
+					-- Non-WuE binding confirmed: leave bindLabel nil so a later
+					-- ContinuableContainer rebuild can fill it through ItemInfo.
+					return false
+				end
+			end
+		end
+	end
+	-- Last resort: GetItemInfo bindType (covers clients without C_TooltipInfo).
+	if ITEM_BIND and entry.hyperlink and C_Item and C_Item.GetItemInfo then
+		local bindType = select(14, C_Item.GetItemInfo(entry.hyperlink))
+		if bindType ~= nil then
+			if bindType == ITEM_BIND.ToBnetAccountUntilEquipped then
+				entry.bindLabel = "WuE"
+				return true
+			end
+			return false
+		end
+	end
+	return false
 end
 
 local function IsAzerite(entry)
@@ -716,6 +761,21 @@ function Categories:HandleCommand(arg)
 	F.Print(format(L["Filter %s is now %s."], canonical, state))
 
 	ns:RefreshBags(true)
+end
+
+-- ---------------------------------------------------------------------------
+-- Lifecycle
+-- ---------------------------------------------------------------------------
+function Categories:OnEnable()
+	-- propCache stores per-itemID properties (toy, anima, decor, azerite, expacID)
+	-- that are truly static for an item type. However, the toy tri-state can get
+	-- stuck if C_ToyBox returned inconclusive data before the toy database was
+	-- fully loaded (which completes a few seconds after login). Clearing on zone
+	-- entry ensures the next scan resolves any previously ambiguous toy flags and
+	-- picks up correct expacID data for all items in the new environment.
+	self:RegisterEvent("PLAYER_ENTERING_WORLD", function()
+		wipe(propCache)
+	end)
 end
 
 -- ---------------------------------------------------------------------------

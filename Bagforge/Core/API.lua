@@ -316,6 +316,9 @@ local VALID_CORNERS = {
 	bottomright = true,
 	left = true,
 	right = true,
+	top = true,
+	bottom = true,	
+	center = true,
 }
 
 local function SortCornerDefs()
@@ -330,7 +333,7 @@ end
 
 --- Register a corner overlay on bag item buttons. `def`:
 ---   key      (string, required, unique)
----   corner   (string, required) - topleft|topright|bottomleft|bottomright|left|right
+---   corner   (string, required) - topleft|topright|bottomleft|bottomright|left|right|center
 ---   update   (function(button, entry) -> show, atlas?, width?, height?, r?, g?, b?, a?)
 ---   priority (number, optional) - lower wins when multiple widgets share a corner
 ---   source   (string, optional)

@@ -267,9 +267,11 @@ function Bank:SetColumns(columns, warband)
 end
 
 function Bank:ResetPosition()
+	-- Clear both per-view keys and the legacy shared key.
 	ns.db.bank.windowPos = nil
 	for i = 1, #self.views do
 		local view = self.views[i]
+		ns.db.bank["windowPos_" .. (view.enabledKey or "active")] = nil
 		if view.frame then
 			view:ApplySavedPosition(nil, view.defaultPoint, view.defaultRelPoint, view.defaultX, view.defaultY)
 		end

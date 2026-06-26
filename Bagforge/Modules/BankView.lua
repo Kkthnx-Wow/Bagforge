@@ -480,7 +480,11 @@ function View:GetScanCallback()
 end
 
 function View:SavedPosition()
-	return ns.db.bank.windowPos
+	-- Per-view key so Character Bank and Warband Bank each remember their own
+	-- position independently. Fall back to the old shared "windowPos" key on
+	-- first load so existing users don't lose their saved position.
+	local key = "windowPos_" .. (self.enabledKey or "active")
+	return ns.db.bank[key] or ns.db.bank.windowPos
 end
 
 function View:BuildWindow()
@@ -494,8 +498,11 @@ function View:BuildWindow()
 	self.frame = frame
 
 	self:ApplyFrameChrome(frame)
+	-- Save under the per-view key so Character Bank and Warband Bank positions
+	-- don't overwrite each other (the old code used one shared "windowPos").
+	local posKey = "windowPos_" .. (self.enabledKey or "active")
 	self:SetupDragPersistence(frame, function(pos)
-		ns.db.bank.windowPos = pos
+		ns.db.bank[posKey] = pos
 	end)
 	if frame.ClosePanelButton then
 		local close = frame.ClosePanelButton

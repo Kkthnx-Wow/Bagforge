@@ -51,6 +51,11 @@ local CORNER_CHOICES = {
 	{ value = "topright", label = L["Top Right"] },
 	{ value = "bottomleft", label = L["Bottom Left"] },
 	{ value = "bottomright", label = L["Bottom Right"] },
+	{ value = "top", label = L["Top"] },
+	{ value = "bottom", label = L["Bottom"] },
+	{ value = "left", label = L["Left"] },
+	{ value = "right", label = L["Right"] },
+	{ value = "center", label = L["Center"] },
 }
 
 local ItemInfo = ns:NewModule("ItemInfo", "itemInfo")
@@ -350,5 +355,10 @@ function ItemInfo:RegisterOptions(category, builder)
 	local _, bindPos = builder:Dropdown(category, self, "bindTextCorner", L["Bind Status Position"], L["Which corner of the slot shows BoE, BoU, BoA and WuE labels."], CORNER_CHOICES)
 	builder:DependsOn(bindPos, bind)
 
-	builder:Dropdown(category, self, "markerCorner", L["Marker Position"], L["Which corner shows the junk coin and custom-category star (only one appears at a time)."], CORNER_CHOICES)
+	local _, markerPos = builder:Dropdown(category, self, "markerCorner", L["Marker Position"], L["Which corner shows the junk coin and custom-category star (only one appears at a time)."], CORNER_CHOICES)
+	-- The junk/star marker is drawn independently of the item-level and bind
+	-- toggles, so it has no per-feature parent. Depend on the master enable so
+	-- this row renders and greys out consistently with the two dropdowns above
+	-- it (otherwise it stands out as the only always-bright control here).
+	builder:DependsOn(markerPos, master)
 end

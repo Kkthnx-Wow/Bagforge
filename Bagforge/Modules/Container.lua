@@ -41,6 +41,7 @@ local GameTooltip = GameTooltip
 local GameTooltip_SetTitle = _G["GameTooltip_SetTitle"]
 local GameTooltip_AddNormalLine = _G["GameTooltip_AddNormalLine"]
 local GameTooltip_Hide = _G["GameTooltip_Hide"]
+local GetCoinTextureString = _G["GetCoinTextureString"]
 local HIGHLIGHT_FONT_COLOR = _G["HIGHLIGHT_FONT_COLOR"]
 local NORMAL_FONT_COLOR = _G["NORMAL_FONT_COLOR"]
 
@@ -486,7 +487,6 @@ function methods:Layout(section, columns, opts)
 				end
 			end
 			if totalJunkValue > 0 then
-				local GetCoinTextureString = _G["GetCoinTextureString"]
 				if GetCoinTextureString then
 					text = name .. " (" .. GetCoinTextureString(totalJunkValue) .. ")"
 				else

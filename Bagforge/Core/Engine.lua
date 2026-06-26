@@ -62,9 +62,12 @@ function moduleMeta:RegisterEvent(event, handler)
 	assert(type(handler) == "function", ("Bagforge: no handler for event '%s' on module '%s'"):format(event, self.name))
 
 	-- Bind `self` once at registration time so the dispatch path stays cheap.
-	ns:RegisterEvent(event, function(_, ...)
+	-- Return the wrapper so callers can store it and pass it to ns:UnregisterEvent
+	-- (matches NexEnhance's engine, which this was lifted from).
+	local wrapper = function(_, ...)
 		handler(self, ...)
-	end)
+	end
+	return ns:RegisterEvent(event, wrapper)
 end
 
 --- Whether this module is enabled in the active profile. Modules that opt into

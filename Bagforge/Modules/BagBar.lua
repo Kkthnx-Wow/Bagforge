@@ -57,7 +57,9 @@ ns.BagBar = BagBar
 
 local function OpenBagFilterMenu(button)
 	local bagID = button.bagID
-	if not bagID then return end
+	if not bagID then
+		return
+	end
 
 	local ContainerFrame_CanContainerUseFilterMenu = _G["ContainerFrame_CanContainerUseFilterMenu"]
 	local ContainerFrameUtil_EnumerateBagGearFilters = _G["ContainerFrameUtil_EnumerateBagGearFilters"]
@@ -67,7 +69,9 @@ local function OpenBagFilterMenu(button)
 	local BAG_FILTER_CLEANUP = _G["BAG_FILTER_CLEANUP"]
 	local SELL_ALL_JUNK_ITEMS_EXCLUDE_FLAG = _G["SELL_ALL_JUNK_ITEMS_EXCLUDE_FLAG"]
 
-	if not MenuUtil then return end
+	if not MenuUtil then
+		return
+	end
 
 	MenuUtil.CreateContextMenu(button, function(_, root)
 		root:SetTag("MENU_BAGFORGE_BAG_BAR_BAG")
@@ -78,16 +82,15 @@ local function OpenBagFilterMenu(button)
 			if ContainerFrameUtil_EnumerateBagGearFilters then
 				for _, flag in ContainerFrameUtil_EnumerateBagGearFilters() do
 					local label = BAG_FILTER_LABELS and BAG_FILTER_LABELS[flag] or ("Filter " .. flag)
-					local checkbox = root:CreateCheckbox(label,
-						function() return C_Container.GetBagSlotFlag(bagID, flag) end,
-						function()
-							local value = not C_Container.GetBagSlotFlag(bagID, flag)
-							C_Container.SetBagSlotFlag(bagID, flag, value)
-							if ContainerFrameSettingsManager and ContainerFrameSettingsManager.SetFilterFlag then
-								ContainerFrameSettingsManager:SetFilterFlag(bagID, flag, value)
-							end
+					local checkbox = root:CreateCheckbox(label, function()
+						return C_Container.GetBagSlotFlag(bagID, flag)
+					end, function()
+						local value = not C_Container.GetBagSlotFlag(bagID, flag)
+						C_Container.SetBagSlotFlag(bagID, flag, value)
+						if ContainerFrameSettingsManager and ContainerFrameSettingsManager.SetFilterFlag then
+							ContainerFrameSettingsManager:SetFilterFlag(bagID, flag, value)
 						end
-					)
+					end)
 					if MenuResponse then
 						checkbox:SetResponse(MenuResponse.Close)
 					end
@@ -155,11 +158,11 @@ local function BagSlot_OnEnter(button)
 		end
 	else
 		-- Keybind key
-		local bindingKey = GetBindingKey(button.commandName or ("TOGGLEBAG" .. (button.bagID)))
+		local bindingKey = GetBindingKey(button.commandName or ("TOGGLEBAG" .. button.bagID))
 		if bindingKey then
 			bindingKey = GetBindingText(bindingKey)
 			if NORMAL_FONT_COLOR then
-				GameTooltip:AppendText(NORMAL_FONT_COLOR:WrapTextInColorCode(" ("..bindingKey..")"))
+				GameTooltip:AppendText(NORMAL_FONT_COLOR:WrapTextInColorCode(" (" .. bindingKey .. ")"))
 			end
 		end
 

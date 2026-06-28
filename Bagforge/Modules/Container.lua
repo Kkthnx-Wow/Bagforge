@@ -41,7 +41,6 @@ local GameTooltip = GameTooltip
 local GameTooltip_SetTitle = _G["GameTooltip_SetTitle"]
 local GameTooltip_AddNormalLine = _G["GameTooltip_AddNormalLine"]
 local GameTooltip_Hide = _G["GameTooltip_Hide"]
-local GetCoinTextureString = _G["GetCoinTextureString"]
 local HIGHLIGHT_FONT_COLOR = _G["HIGHLIGHT_FONT_COLOR"]
 local NORMAL_FONT_COLOR = _G["NORMAL_FONT_COLOR"]
 
@@ -401,6 +400,8 @@ local function SectionSignature(section, columns, opts, showHeader)
 	end
 	local hideSearch = ns.db and ns.db.organize and ns.db.organize.searchHideNonMatches
 	h = FoldHash(h, hideSearch and 1 or 0)
+	local showCounts = ns.db and ns.db.organize and ns.db.organize.showCategoryCounts
+	h = FoldHash(h, showCounts == false and 0 or 1)
 	local items = section and section.items
 	if items then
 		for i = 1, #items do
@@ -413,6 +414,7 @@ local function SectionSignature(section, columns, opts, showHeader)
 			h = FoldHash(h, e.isLocked and 1 or 0)
 			h = FoldHash(h, e.isNewItem and 1 or 0)
 			h = FoldHash(h, e.isBound and 1 or 0)
+			h = FoldHash(h, e.isUnusable and 1 or 0)
 			h = SafeFold(h, e.icon)
 			if e.bindLabel and F.CanAccessValue(e.bindLabel) then
 				for j = 1, #e.bindLabel do
@@ -423,6 +425,55 @@ local function SectionSignature(section, columns, opts, showHeader)
 		end
 	end
 	return h
+end
+
+local BreakUpLargeNumbers = _G.BreakUpLargeNumbers
+
+local function SectionItemTotal(section)
+	local items = section and section.items
+	if not items or #items == 0 then
+		return 0
+	end
+	local n = 0
+	for i = 1, #items do
+		local c = items[i].count or 1
+		if F.NotSecret(c) then
+			n = n + c
+		else
+			n = n + 1
+		end
+	end
+	return n
+end
+
+local function BuildHeaderText(section, name)
+	local text = name or ""
+	local o = ns.db and ns.db.organize
+	if name and o and o.showCategoryCounts ~= false and section and section.items and #section.items > 0 then
+		local n = SectionItemTotal(section)
+		if n > 0 then
+			local num = BreakUpLargeNumbers and BreakUpLargeNumbers(n) or n
+			text = format("%s (%s)", name, num)
+		end
+	end
+	local showJunk = not ns.db or not ns.db.backpack or ns.db.backpack.showJunkPrice
+	if showJunk and name == L["Junk"] and section and section.items then
+		local totalJunkValue = 0
+		for i = 1, #section.items do
+			local entry = section.items[i]
+			local sellPrice = entry.sellPrice
+			if sellPrice and F.NotSecret(sellPrice) and sellPrice > 0 then
+				local count = entry.count or 1
+				if F.NotSecret(count) then
+					totalJunkValue = totalJunkValue + (sellPrice * count)
+				end
+			end
+		end
+		if totalJunkValue > 0 then
+			text = text .. " - " .. F.FormatMoney(totalJunkValue)
+		end
+	end
+	return text
 end
 
 local layoutVisibleScratch = {}
@@ -455,6 +506,94 @@ local function LayoutEntries(entries, hideNonMatches)
 	return layoutVisibleScratch, n
 end
 
+local layoutBatchFrame
+local layoutBatchPending = {}
+
+local function CancelBatchLayout(container)
+	if not container._batchState then
+		return
+	end
+	container._batchState = nil
+	for i = #layoutBatchPending, 1, -1 do
+		if layoutBatchPending[i] == container then
+			table.remove(layoutBatchPending, i)
+		end
+	end
+end
+
+local function QueueBatchLayout(container)
+	for i = 1, #layoutBatchPending do
+		if layoutBatchPending[i] == container then
+			return
+		end
+	end
+	layoutBatchPending[#layoutBatchPending + 1] = container
+	if not layoutBatchFrame then
+		layoutBatchFrame = CreateFrame("Frame")
+	end
+	layoutBatchFrame:SetScript("OnUpdate", function()
+		local i = 1
+		while i <= #layoutBatchPending do
+			local panel = layoutBatchPending[i]
+			if panel:_AdvanceLayoutBatch() then
+				table.remove(layoutBatchPending, i)
+			else
+				i = i + 1
+			end
+		end
+		if #layoutBatchPending == 0 then
+			layoutBatchFrame:SetScript("OnUpdate", nil)
+		end
+	end)
+end
+
+local function PlaceLayoutButton(container, i, entry, columns, size, pad, leftX, topOffset, itemButton)
+	local button = container.buttons[i]
+	if not button then
+		button = itemButton:Acquire()
+		if button then
+			button:SetParent(container.frame)
+			container.buttons[i] = button
+		end
+	end
+	if button then
+		local col = (i - 1) % columns
+		local row = floor((i - 1) / columns)
+		button:ClearAllPoints()
+		button:SetPoint("TOPLEFT", container.frame, "TOPLEFT", leftX + col * (size + pad), -(topOffset + row * (size + pad)))
+		button:SetItemEntry(entry)
+	else
+		local stale = container.buttons[i]
+		if stale then
+			itemButton:Release(stale)
+			container.buttons[i] = nil
+		end
+	end
+end
+
+function methods:_AdvanceLayoutBatch()
+	local state = self._batchState
+	if not state then
+		return true
+	end
+	local itemButton = ns:GetModule("ItemButton")
+	local from = state.nextIndex
+	local to = min(from + state.batchSize - 1, state.count)
+	for i = from, to do
+		PlaceLayoutButton(self, i, state.displayEntries[i], state.columns, state.size, state.pad, state.leftX, state.topOffset, itemButton)
+	end
+	state.nextIndex = to + 1
+	if state.nextIndex > state.count then
+		for i = #self.buttons, state.count + 1, -1 do
+			itemButton:Release(self.buttons[i])
+			self.buttons[i] = nil
+		end
+		self._batchState = nil
+		return true
+	end
+	return false
+end
+
 function methods:Layout(section, columns, opts)
 	opts = opts or {}
 
@@ -469,32 +608,11 @@ function methods:Layout(section, columns, opts)
 		return self._lastW, self._lastH
 	end
 	self._sig = sig
+	CancelBatchLayout(self)
 
 	if showHeader then
 		local name = section and section.name
-		local text = name or ""
-		local showJunk = not ns.db or not ns.db.backpack or ns.db.backpack.showJunkPrice
-		if showJunk and name == L["Junk"] and section and section.items then
-			local totalJunkValue = 0
-			for i = 1, #section.items do
-				local entry = section.items[i]
-				local id = entry.hyperlink or entry.itemID
-				if id then
-					local sellPrice = select(11, C_Item.GetItemInfo(id))
-					if sellPrice and sellPrice > 0 then
-						totalJunkValue = totalJunkValue + (sellPrice * (entry.count or 1))
-					end
-				end
-			end
-			if totalJunkValue > 0 then
-				if GetCoinTextureString then
-					text = name .. " (" .. GetCoinTextureString(totalJunkValue) .. ")"
-				else
-					text = name .. " (" .. format("%.2fg", totalJunkValue / 10000) .. ")"
-				end
-			end
-		end
-		self.header:SetText(text)
+		self.header:SetText(BuildHeaderText(section, name))
 		-- Custom header tint (Modules/Organize): a custom/search category can
 		-- carry a colour; group-by sub-panels ("<name>: <suffix>") inherit the
 		-- parent's. Falls back to the template's default yellow.
@@ -530,29 +648,43 @@ function methods:Layout(section, columns, opts)
 	local bottomInset = opts.bottomInset or 0
 	local topOffset = insetY + headerH + topInset
 
-	-- Reuse the buttons this panel already holds and only repaint them; acquire
-	-- just the growth and release just the shrink. Releasing/re-acquiring the
-	-- whole section every redraw (cargBags/NDui repaint per button) churns the
-	-- shared pool and re-parents needlessly when one stack count ticked.
-	for i = 1, count do
-		local button = self.buttons[i]
-		if not button then
-			button = itemButton:Acquire()
-			button:SetParent(self.frame)
-			self.buttons[i] = button
+	local batchSize = opts.layoutBatchSize
+	if batchSize and batchSize > 0 and count > batchSize then
+		self._batchState = {
+			displayEntries = displayEntries,
+			count = count,
+			columns = columns,
+			size = size,
+			pad = pad,
+			leftX = leftX,
+			topOffset = topOffset,
+			batchSize = batchSize,
+			nextIndex = 1,
+		}
+		local itemButton = ns:GetModule("ItemButton")
+		local firstEnd = min(batchSize, count)
+		for i = 1, firstEnd do
+			PlaceLayoutButton(self, i, displayEntries[i], columns, size, pad, leftX, topOffset, itemButton)
 		end
-
-		local col = (i - 1) % columns
-		local row = floor((i - 1) / columns)
-		button:ClearAllPoints()
-		button:SetPoint("TOPLEFT", self.frame, "TOPLEFT", leftX + col * (size + pad), -(topOffset + row * (size + pad)))
-		button:SetItemEntry(displayEntries[i])
-	end
-
-	-- Hand back any buttons beyond the new count (section shrank).
-	for i = #self.buttons, count + 1, -1 do
-		itemButton:Release(self.buttons[i])
-		self.buttons[i] = nil
+		self._batchState.nextIndex = firstEnd + 1
+		if self._batchState.nextIndex <= count then
+			QueueBatchLayout(self)
+		else
+			for i = #self.buttons, count + 1, -1 do
+				itemButton:Release(self.buttons[i])
+				self.buttons[i] = nil
+			end
+			self._batchState = nil
+		end
+	else
+		local itemButton = ns:GetModule("ItemButton")
+		for i = 1, count do
+			PlaceLayoutButton(self, i, displayEntries[i], columns, size, pad, leftX, topOffset, itemButton)
+		end
+		for i = #self.buttons, count + 1, -1 do
+			itemButton:Release(self.buttons[i])
+			self.buttons[i] = nil
+		end
 	end
 
 	-- The free-slot box (main panel only) trails the last item as cell #count+1,
@@ -685,6 +817,7 @@ function Container.StackCategories(opts)
 	local gap = C.Layout.PANEL_GAP
 
 	local perColumn = opts.perColumn or C.Layout.DEFAULT_CATEGORIES_PER_COLUMN
+	local layoutBatchSize = opts.layoutBatchSize
 	if perColumn < 1 then
 		perColumn = 1
 	end
@@ -709,9 +842,9 @@ function Container.StackCategories(opts)
 			if freeInfo then
 				Container.AddFreeSlot(container)
 				container:SetFreeSlotDeposit(freeInfo.getBags)
-				container:Layout(section, cols, { forceWidth = gridW, freeCount = freeInfo.count })
+				container:Layout(section, cols, { forceWidth = gridW, freeCount = freeInfo.count, layoutBatchSize = layoutBatchSize })
 			else
-				container:Layout(section, cols, { forceWidth = gridW })
+				container:Layout(section, cols, { forceWidth = gridW, layoutBatchSize = layoutBatchSize })
 			end
 			local panel = container:GetFrame()
 			panel:ClearAllPoints()
@@ -754,7 +887,71 @@ function methods:ReleaseButtons()
 	end
 end
 
+--- Hide item slot widgets while the parent window is being dragged. Moving hundreds
+--- of secure ContainerFrameItemButtonTemplate children every frame tanks FPS.
+function methods:SetItemGridsHidden(hidden)
+	if self._itemsHidden == hidden then
+		return
+	end
+	self._itemsHidden = hidden
+	if hidden then
+		CancelBatchLayout(self)
+		self._sig = nil
+		self._lastW = nil
+		self._lastH = nil
+	end
+	local buttons = self.buttons
+	if buttons then
+		for i = 1, #buttons do
+			local btn = buttons[i]
+			if btn then
+				btn:SetShown(not hidden)
+			end
+		end
+	end
+	if self.freeSlot then
+		if hidden then
+			self._freeSlotWasShown = self.freeSlot:IsShown()
+			self.freeSlot:Hide()
+		elseif self._freeSlotWasShown then
+			self.freeSlot:Show()
+			self._freeSlotWasShown = nil
+		end
+	end
+	if self.extendedSlots then
+		if hidden then
+			for i = 1, #self.extendedSlots do
+				local slot = self.extendedSlots[i]
+				if slot and slot:IsShown() then
+					self._extShown = self._extShown or {}
+					self._extShown[i] = true
+					slot:Hide()
+				end
+			end
+			if self.addSlotsButton and self.addSlotsButton:IsShown() then
+				self._addSlotsWasShown = true
+				self.addSlotsButton:Hide()
+			end
+		else
+			if self._extShown then
+				for i in pairs(self._extShown) do
+					local slot = self.extendedSlots[i]
+					if slot then
+						slot:Show()
+					end
+				end
+				wipe(self._extShown)
+			end
+			if self._addSlotsWasShown and self.addSlotsButton then
+				self.addSlotsButton:Show()
+				self._addSlotsWasShown = nil
+			end
+		end
+	end
+end
+
 function methods:Reset()
+	CancelBatchLayout(self)
 	self:ReleaseButtons()
 	self.header:SetText("")
 	self.frame:ClearAllPoints()
@@ -765,6 +962,7 @@ function methods:Reset()
 	self._sig = nil
 	self._lastW = nil
 	self._lastH = nil
+	self._itemsHidden = nil
 end
 
 function Container.CreatePool(parent)

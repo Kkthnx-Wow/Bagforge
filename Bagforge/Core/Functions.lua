@@ -121,6 +121,12 @@ function F.DecoratePickupMoneyFrame(money, tooltipAnchor)
 
 	local function OnEnter()
 		highlight:Show()
+		if GetMoney and F.IsSecret(GetMoney()) then
+			GameTooltip:SetOwner(money, tooltipAnchor)
+			GameTooltip:SetText(L["Money"])
+			GameTooltip:Show()
+			return
+		end
 		GameTooltip:SetOwner(money, tooltipAnchor)
 		GameTooltip:SetText(L["Money"])
 		F.AddClickHintLine(GameTooltip, "left", "%s to pick up money")
@@ -164,6 +170,18 @@ function F.FormatMoney(copper)
 		return format("%d%s %d%s", silver, silverIcon, copperRem, copperIcon)
 	end
 	return format("%d%s", copperRem, copperIcon)
+end
+
+--- Stable hash key for a bag/slot pair (used across scan, transfers, and buttons).
+function F.SlotKey(bag, slot)
+	return (bag or 0) * 1000 + (slot or 0)
+end
+
+--- Cached vendor sell price per itemID (delegates to Core/Scan.lua).
+function F.GetSellPrice(itemID, hyperlink)
+	if ns.Scan and ns.Scan.GetSellPrice then
+		return ns.Scan.GetSellPrice(itemID, hyperlink)
+	end
 end
 
 -- ---------------------------------------------------------------------------
@@ -248,26 +266,19 @@ function F.DebounceNoArgs(delay, func)
 end
 
 -- ---------------------------------------------------------------------------
--- Tooltip hover throttle (~75ms, Sorted-style)
---   Post-hooks OnEnter/OnLeave on bag item buttons. Hides Blizzard's immediate
---   tooltip and reschedules through the stock ContainerFrameItemButton mixin so
---   quest items, compare, and bank tabs all behave like default bags.
+-- Tooltip hover throttle
+--   Rapid cursor movement across hundreds of bank slots must not call
+--   GameTooltip:Hide / mixin OnLeave / C_Timer.NewTimer per crossing. One shared
+--   OnUpdate polls the hover target; Blizzard cleanup runs only after a tooltip
+--   was actually shown.
 -- ---------------------------------------------------------------------------
-local TOOLTIP_HOVER_DELAY = 0.075
-local tooltipPendingButton
-local tooltipPendingTimer
-local tooltipGeneration = 0
-local lastTooltipShowTime = 0
+local TOOLTIP_HOVER_DELAY = 0.12
+local hoverFrame
+local hoverTarget
+local hoverReadyAt = 0
+local tooltipShownButton
 local GameTooltip = _G["GameTooltip"]
 local ContainerFrameItemButtonMixin = _G["ContainerFrameItemButtonMixin"]
-
-local function CancelTooltipPending()
-	if tooltipPendingTimer then
-		tooltipPendingTimer:Cancel()
-		tooltipPendingTimer = nil
-	end
-	tooltipPendingButton = nil
-end
 
 local function GetBagSlot(button)
 	local parent = button:GetParent()
@@ -295,6 +306,22 @@ local function IsMouseOnButton(button)
 	return parent and parent:IsMouseOver()
 end
 
+local function HideShownTooltip()
+	if not tooltipShownButton then
+		return
+	end
+	local prev = tooltipShownButton
+	tooltipShownButton = nil
+	if ContainerFrameItemButtonMixin and ContainerFrameItemButtonMixin.OnLeave then
+		local ok, err = pcall(ContainerFrameItemButtonMixin.OnLeave, prev)
+		if not ok and not F.IsSecretLuaError(err) then
+			geterrorhandler()(err)
+		end
+	elseif GameTooltip then
+		GameTooltip:Hide()
+	end
+end
+
 local function ShowBagItemTooltip(button)
 	if not button then
 		return
@@ -303,82 +330,114 @@ local function ShowBagItemTooltip(button)
 	if not bag or not slot then
 		return
 	end
-	-- Full stock tooltip (quest text, dress-up cursor, comparison, etc.).
-	if ContainerFrameItemButtonMixin and ContainerFrameItemButtonMixin.OnEnter then
-		ContainerFrameItemButtonMixin.OnEnter(button)
-	elseif GameTooltip and GameTooltip.SetBagItem then
-		GameTooltip:SetOwner(button, "ANCHOR_RIGHT")
-		GameTooltip:SetBagItem(bag, slot)
-		GameTooltip:Show()
+	if tooltipShownButton ~= button then
+		HideShownTooltip()
 	end
-	lastTooltipShowTime = GetTime()
+	-- Full stock tooltip (quest text, dress-up cursor, comparison, etc.).
+	local shown = false
+	if ContainerFrameItemButtonMixin and ContainerFrameItemButtonMixin.OnEnter then
+		local ok, err = pcall(ContainerFrameItemButtonMixin.OnEnter, button)
+		if ok then
+			shown = true
+		elseif not F.IsSecretLuaError(err) then
+			geterrorhandler()(err)
+		end
+	end
+	if not shown and GameTooltip and GameTooltip.SetBagItem then
+		GameTooltip:SetOwner(button, "ANCHOR_RIGHT")
+		local ok = pcall(GameTooltip.SetBagItem, GameTooltip, bag, slot)
+		if ok then
+			GameTooltip:Show()
+			shown = true
+		end
+	end
+	if shown then
+		tooltipShownButton = button
+	end
+end
+
+local function StopHoverPoll()
+	if hoverFrame then
+		hoverFrame:SetScript("OnUpdate", nil)
+	end
+end
+
+local function EnsureHoverFrame()
+	if not hoverFrame then
+		hoverFrame = CreateFrame("Frame")
+	end
+	return hoverFrame
+end
+
+local function StartHoverPoll()
+	local frame = EnsureHoverFrame()
+	if frame:GetScript("OnUpdate") then
+		return
+	end
+	frame:SetScript("OnUpdate", function()
+		local target = hoverTarget
+		if not target then
+			StopHoverPoll()
+			return
+		end
+		if GetTime() < hoverReadyAt then
+			return
+		end
+		if not IsMouseOnButton(target) then
+			hoverTarget = nil
+			StopHoverPoll()
+			return
+		end
+		hoverTarget = nil
+		StopHoverPoll()
+		ShowBagItemTooltip(target)
+	end)
 end
 
 function F.TooltipThrottleLeave(button)
-	tooltipGeneration = tooltipGeneration + 1
-	if tooltipPendingButton == button then
-		CancelTooltipPending()
+	if hoverTarget == button then
+		hoverTarget = nil
 	end
-	local owner = GameTooltip and GameTooltip.GetOwner and GameTooltip:GetOwner()
-	if owner == button or owner == button:GetParent() then
-		GameTooltip:Hide()
+	-- Fast path: cursor passed over a slot without ever showing its tooltip.
+	if tooltipShownButton ~= button then
+		return
 	end
+	HideShownTooltip()
 end
 
 function F.TooltipThrottleEnter(button)
 	if not button then
 		return
 	end
-	CancelTooltipPending()
-	tooltipGeneration = tooltipGeneration + 1
-	local gen = tooltipGeneration
+	hoverTarget = button
+	hoverReadyAt = GetTime() + TOOLTIP_HOVER_DELAY
+	StartHoverPoll()
+end
 
-	local now = GetTime()
-	-- After a quiet period, show immediately (Sorted-style).
-	if now - lastTooltipShowTime >= TOOLTIP_HOVER_DELAY then
-		ShowBagItemTooltip(button)
+function F.HideActiveBagTooltip()
+	hoverTarget = nil
+	StopHoverPoll()
+	HideShownTooltip()
+end
+
+function F.RefreshBagItemTooltipIfHovered(button)
+	if not button or not IsMouseOnButton(button) then
 		return
 	end
-
-	if GameTooltip then
-		GameTooltip:Hide()
+	if tooltipShownButton == button then
+		ShowBagItemTooltip(button)
 	end
-	tooltipPendingButton = button
-	local delay = TOOLTIP_HOVER_DELAY - (now - lastTooltipShowTime)
-	if delay < 0 then
-		delay = 0
-	end
-	tooltipPendingTimer = C_Timer.NewTimer(delay, function()
-		tooltipPendingTimer = nil
-		if gen ~= tooltipGeneration then
-			return
-		end
-		if IsMouseOnButton(button) then
-			ShowBagItemTooltip(button)
-		end
-		tooltipPendingButton = nil
-	end)
 end
 
 --- Install delayed tooltip show on a ContainerFrameItemButtonTemplate button.
---- Uses SetScript (not HookScript) for OnEnter so Blizzard's handler —
---- ContainerFrameItemButton_OnEnter → ContainerFrameItemButtonMixin:OnEnter →
---- GameTooltip:SetBagItem — is fully replaced. This prevents the expensive
---- tooltip build from running on every cursor entry during rapid mouse movement;
---- instead it only fires once the throttle delay has elapsed. The stock OnLeave
---- still runs via HookScript (it's cheap and cleans up cursor state).
+--- SetScript replaces Blizzard's OnEnter/OnLeave so pass-through hovers stay cheap.
 function F.InstallTooltipThrottle(button)
 	if not button or button.bfTooltipThrottle then
 		return
 	end
 	button.bfTooltipThrottle = true
-	-- SetScript replaces the XML-set ContainerFrameItemButton_OnEnter entirely.
-	-- Our throttle then calls ContainerFrameItemButtonMixin.OnEnter (via
-	-- ShowBagItemTooltip) only when the delay allows. HookScript would fire
-	-- AFTER the original, paying the full SetBagItem cost every enter even when
-	-- we immediately hide the tooltip.
 	button:SetScript("OnEnter", F.TooltipThrottleEnter)
-	button:HookScript("OnLeave", F.TooltipThrottleLeave)
+	button:SetScript("OnLeave", F.TooltipThrottleLeave)
 end
 
 -- ---------------------------------------------------------------------------
@@ -425,6 +484,9 @@ function F.CreatePool(creator, onRemoved, onAcquired)
 			self.numFree = self.numFree - 1
 		else
 			obj = creator()
+			if not obj then
+				return nil
+			end
 			self.objects[#self.objects + 1] = obj
 			obj.Release = objRelease
 		end
@@ -508,7 +570,16 @@ do
 	function F.CanAccessValue(value)
 		return not canaccessvalue or canaccessvalue(value)
 	end
+
+	--- True when a Lua error was raised by touching a secret value in tainted code.
+	function F.IsSecretLuaError(err)
+		return type(err) == "string" and err:find("secret value", 1, true) ~= nil
+	end
 end
+
+-- Midnight tooltip guards: ShowBagItemTooltip / HideShownTooltip above wrap
+-- ContainerFrameItemButtonMixin and SetBagItem in pcall. F.IsSecretLuaError
+-- identifies secret-value failures so we fall back or hide without Lua errors.
 
 -- ---------------------------------------------------------------------------
 -- Font strings

@@ -8,7 +8,7 @@
 --]]
 
 local _, ns = ...
-local C = ns.C
+local C, F = ns.C, ns.F
 
 local CreateFrame = CreateFrame
 local InCombatLockdown = InCombatLockdown
@@ -30,6 +30,9 @@ function ContainerWindow.Apply(target)
 	target.InitCategoryContainers = ContainerWindow.InitCategoryContainers
 	target.ApplyFrameChrome = ContainerWindow.ApplyFrameChrome
 	target.SetupDragPersistence = ContainerWindow.SetupDragPersistence
+	target.SetItemGridsHidden = ContainerWindow.SetItemGridsHidden
+	target.InvalidateItemLayouts = ContainerWindow.InvalidateItemLayouts
+	target.RelayoutAfterDrag = ContainerWindow.RelayoutAfterDrag
 	target.ApplySavedPosition = ContainerWindow.ApplySavedPosition
 	target.GetChromeInsets = ContainerWindow.GetChromeInsets
 	target.CreateSearchBox = ContainerWindow.CreateSearchBox
@@ -94,12 +97,59 @@ function ContainerWindow:ApplyFrameChrome(frame)
 end
 
 function ContainerWindow:SetupDragPersistence(frame, setPos)
-	frame:SetScript("OnDragStart", frame.StartMoving)
+	local owner = self
+	frame:SetScript("OnDragStart", function(f)
+		if F.HideActiveBagTooltip then
+			F.HideActiveBagTooltip()
+		end
+		owner:SetItemGridsHidden(true)
+		f:StartMoving()
+	end)
 	frame:SetScript("OnDragStop", function(f)
 		f:StopMovingOrSizing()
+		owner:SetItemGridsHidden(false)
+		owner:InvalidateItemLayouts()
+		owner:RelayoutAfterDrag()
 		local point, _, relPoint, x, y = f:GetPoint(1)
 		setPos({ point = point, relPoint = relPoint, x = x, y = y })
 	end)
+end
+
+function ContainerWindow:SetItemGridsHidden(hidden)
+	if self.mainContainer and self.mainContainer.SetItemGridsHidden then
+		self.mainContainer:SetItemGridsHidden(hidden)
+	end
+	local containers = self.categoryContainers
+	if containers then
+		for _, container in pairs(containers) do
+			container:SetItemGridsHidden(hidden)
+		end
+	end
+end
+
+function ContainerWindow:InvalidateItemLayouts()
+	if self.mainContainer then
+		self.mainContainer._sig = nil
+		self.mainContainer._lastW = nil
+		self.mainContainer._lastH = nil
+	end
+	local containers = self.categoryContainers
+	if containers then
+		for _, container in pairs(containers) do
+			container._sig = nil
+			container._lastW = nil
+			container._lastH = nil
+		end
+	end
+end
+
+function ContainerWindow:RelayoutAfterDrag()
+	if self.open == false then
+		return
+	end
+	if self.frame and self.frame:IsShown() and self.Draw then
+		self:Draw()
+	end
 end
 
 function ContainerWindow:ApplySavedPosition(pos, defaultPoint, defaultRelPoint, defaultX, defaultY)
@@ -244,6 +294,9 @@ function ContainerWindow:DrawCategorized(opts)
 
 	local layoutOpts = opts.mainLayoutOpts or {}
 	layoutOpts.forceWidth = gridW
+	if opts.layoutBatchSize then
+		layoutOpts.layoutBatchSize = opts.layoutBatchSize
+	end
 	self.mainContainer:Layout(layoutSection, cols, layoutOpts)
 
 	ns.Container.StackCategories({
@@ -254,6 +307,7 @@ function ContainerWindow:DrawCategorized(opts)
 		gridWidth = gridW,
 		perColumn = perColumn,
 		freeSlots = opts.freeSlots,
+		layoutBatchSize = opts.layoutBatchSize,
 		owner = self,
 		active = active,
 	})

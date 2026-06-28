@@ -33,8 +33,8 @@
 	        API:RegisterSortMode({
 	            key = "myaddon.value", source = "MyAddon", label = "Vendor Value",
 	            comparator = function(a, b)
-	                local priceA = a.itemID and select(11, C_Item.GetItemInfo(a.itemID)) or 0
-	                local priceB = b.itemID and select(11, C_Item.GetItemInfo(b.itemID)) or 0
+	                local priceA = a.sellPrice or (a.itemID and ns.Scan and ns.Scan.GetSellPrice(a.itemID, a.hyperlink)) or 0
+	                local priceB = b.sellPrice or (b.itemID and ns.Scan and ns.Scan.GetSellPrice(b.itemID, b.hyperlink)) or 0
 	                if F.IsSecret(priceA) or F.IsSecret(priceB) then return false end
 	                return (priceA or 0) > (priceB or 0)
 	            end,

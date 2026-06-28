@@ -6,7 +6,6 @@
 ## SavedVariables: BagforgeDB
 ## SavedVariablesPerCharacter: BagforgeCharDB
 ## IconTexture: Interface\Addons\Bagforge\assets\Icon64.blp
-## X-Curse-Project-ID: 
 ## X-Support: Midnight
 ## X-Category: Inventory
 ## X-Curse-Project-ID: 1586276

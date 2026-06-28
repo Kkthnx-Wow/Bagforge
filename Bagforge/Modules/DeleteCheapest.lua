@@ -96,7 +96,7 @@ local function FindCheapest()
 		for slot = 1, numSlots do
 			local info = C_Container_GetContainerItemInfo(bag, slot)
 			if info and not info.hasNoValue and info.hyperlink and F.NotSecret(info.hyperlink) and info.itemID and F.NotSecret(info.itemID) then
-				local sellPrice = select(11, C_Item_GetItemInfo(info.hyperlink))
+				local sellPrice = ns.Scan and ns.Scan.GetSellPrice and ns.Scan.GetSellPrice(info.itemID, info.hyperlink)
 				-- sellPrice is static item data (not Secret); guard anyway.
 				if sellPrice and F.NotSecret(sellPrice) and sellPrice > 0 and not IsFiltered(info.hyperlink) then
 					-- Stack count can be Secret in combat; only multiply when

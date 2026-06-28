@@ -549,6 +549,7 @@ function Backpack:Draw()
 		gridWidth = gridW,
 		perColumn = ns.db.backpack.categoriesPerColumn,
 		freeSlots = freeSlots,
+		layoutBatchSize = C.Layout.BACKPACK_LAYOUT_BATCH,
 		mainLayoutOpts = {
 			showMainTitle = true,
 			topInset = C.Layout.MAIN_CHROME_TOP,

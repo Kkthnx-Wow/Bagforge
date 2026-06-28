@@ -118,6 +118,53 @@ end
 -- ---------------------------------------------------------------------------
 local classCache = {}
 local reqLevelCache = {}
+local tooltipUnfitCache = {}
+
+local ITEM_SCRAPABLE_NOT = _G["ITEM_SCRAPABLE_NOT"]
+local CANNOT_UNEQUIP_COMBAT = _G["CANNOT_UNEQUIP_COMBAT"]
+local ITEM_DISENCHANT_NOT_DISENCHANTABLE = _G["ITEM_DISENCHANT_NOT_DISENCHANTABLE"]
+local IsEquippableItem = _G["IsEquippableItem"]
+
+local function IsTooltipUnusable(itemID)
+	if not itemID or F.IsSecret(itemID) then
+		return false
+	end
+	local cached = tooltipUnfitCache[itemID]
+	if cached ~= nil then
+		return cached
+	end
+
+	local result = false
+	if C_TooltipInfo and C_TooltipInfo.GetItemByID and (IsEquippableItem or C_Item.GetItemSpell) then
+		local check = IsEquippableItem and IsEquippableItem(itemID)
+		if not check and C_Item.GetItemSpell then
+			check = C_Item.GetItemSpell(itemID)
+		end
+		if check then
+			local tip = C_TooltipInfo.GetItemByID(itemID)
+			if tip and tip.lines then
+				for _, row in ipairs(tip.lines) do
+					local lc = row.leftColor
+					if lc and lc.r == 1 and lc.g < 0.2 and lc.b < 0.2
+						and row.leftText ~= ITEM_SCRAPABLE_NOT
+						and row.leftText ~= CANNOT_UNEQUIP_COMBAT
+						and row.leftText ~= ITEM_DISENCHANT_NOT_DISENCHANTABLE then
+						result = true
+						break
+					end
+					local rc = row.rightColor
+					if rc and rc.r == 1 and rc.g < 0.2 and rc.b < 0.2 then
+						result = true
+						break
+					end
+				end
+			end
+		end
+	end
+
+	F.CacheSet(tooltipUnfitCache, itemID, result)
+	return result
+end
 
 local function IsClassUnusable(item)
 	if not (playerUnusable and item.itemID) then
@@ -150,6 +197,9 @@ function ItemInfo:IsUnusable(item)
 		return false
 	end
 	if IsClassUnusable(item) then
+		return true
+	end
+	if IsTooltipUnusable(item.itemID) then
 		return true
 	end
 
@@ -273,27 +323,23 @@ end
 
 -- ---------------------------------------------------------------------------
 -- Wiring
---   Publish (or clear) the checkers and a couple of display flags the item
---   button reads, then repaint open windows. Same pattern as Modules/Pawn.
+--   Publish display flags the item button reads, then repaint open windows.
 -- ---------------------------------------------------------------------------
+local function RefreshUnusableEntries()
+	if ns.Scan and ns.Scan.RefreshUnusableAll then
+		ns.Scan.RefreshUnusableAll()
+	end
+end
+
 function ItemInfo:Apply()
 	local db = ns.db.itemInfo
 	local on = db.enable
 
 	ns.ShowItemLevel = on and db.itemLevel or false
 
-	if on and db.unusable then
-		-- Lazily build the class lookup so this works even when the module is
-		-- toggled on live (OnEnable wouldn't have run if it started disabled).
-		if not playerUnusable then
-			BuildUnusable()
-			playerLevel = UnitLevel("player") or playerLevel
-		end
-		ns.IsItemUnusable = function(item)
-			return ItemInfo:IsUnusable(item)
-		end
-	else
-		ns.IsItemUnusable = nil
+	if on and db.unusable and not playerUnusable then
+		BuildUnusable()
+		playerLevel = UnitLevel("player") or playerLevel
 	end
 
 	if on and db.bindText then
@@ -309,13 +355,10 @@ function ItemInfo:Apply()
 		itemButton:ApplyOverlayLayout()
 	end
 
-	-- Repaint open windows from current data (toggles changed, not membership).
+	RefreshUnusableEntries()
 	ns:RefreshBags(false)
 end
 
--- ---------------------------------------------------------------------------
--- Lifecycle
--- ---------------------------------------------------------------------------
 function ItemInfo:OnEnable()
 	BuildUnusable()
 	playerLevel = UnitLevel("player") or 1
@@ -325,7 +368,7 @@ end
 
 function ItemInfo:OnLevelUp(level)
 	playerLevel = level or UnitLevel("player") or 1
-	-- Required level for some items may now be met; repaint, no rescan needed.
+	RefreshUnusableEntries()
 	ns:RefreshBags(false)
 end
 

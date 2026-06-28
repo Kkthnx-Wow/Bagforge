@@ -184,6 +184,11 @@ C.Layout = {
 	DEFAULT_CATEGORIES_PER_COLUMN = 5,
 	MIN_CATEGORIES_PER_COLUMN = 1,
 	MAX_CATEGORIES_PER_COLUMN = 12,
+	-- Bank panels: place item buttons in chunks per frame to avoid open hitch.
+	BANK_LAYOUT_BATCH = 80,
+	BACKPACK_LAYOUT_BATCH = 80,
+	-- Secure item buttons pre-created at login (backpack + bank while both open).
+	ITEM_BUTTON_POOL_PREWARM = 400,
 
 	-- Blizzard BankFrame UIPanel slot (area=left; UIParent LEFT_OFFSET=16, TOP_OFFSET=-116).
 	BANK_DEFAULT_POINT = "LEFT",

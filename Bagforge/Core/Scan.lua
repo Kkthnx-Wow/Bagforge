@@ -17,10 +17,12 @@
 --]]
 
 local _, ns = ...
-local L, F = ns.L, ns.F
+local C, L, F = ns.C, ns.L, ns.F
 
 local C_Container = C_Container
 local C_Item = C_Item
+local C_Bank = C_Bank
+local ItemLocation = ItemLocation
 local GetContainerItemEquipmentSetInfo = C_Container.GetContainerItemEquipmentSetInfo
 local GetContainerItemID = C_Container.GetContainerItemID
 local GetItemInventoryTypeByID = C_Item.GetItemInventoryTypeByID
@@ -46,6 +48,7 @@ local ITEM_CLASS_TRADEGOODS = Enum.ItemClass.Tradegoods
 local maxStackCache = {}
 local nameCache = {}
 local expacCache = {}
+local sellPriceCache = {}
 local function GetBasics(itemID)
 	if not itemID then
 		return nil, nil, nil
@@ -65,6 +68,40 @@ local function GetBasics(itemID)
 		expacCache[itemID] = expacID
 	end
 	return stack, name, expacID
+end
+
+local function GetSellPrice(itemID, hyperlink)
+	if not itemID or F.IsSecret(itemID) then
+		return nil
+	end
+	local cached = sellPriceCache[itemID]
+	if cached ~= nil then
+		return cached or nil
+	end
+	local price
+	if hyperlink and F.NotSecret(hyperlink) then
+		price = select(11, GetItemInfo(hyperlink))
+	end
+	if price == nil then
+		price = select(11, GetItemInfo(itemID))
+	end
+	if price ~= nil and F.NotSecret(price) then
+		sellPriceCache[itemID] = price
+		return price
+	end
+	return nil
+end
+
+local function CacheUnusable(entry, itemInfo)
+	entry.isUnusable = false
+	if not itemInfo then
+		return
+	end
+	local db = ns.db and ns.db.itemInfo
+	if not (db and db.enable and db.unusable) then
+		return
+	end
+	entry.isUnusable = itemInfo:IsUnusable(entry) and true or false
 end
 
 --- Stack-merge key for an entry: only stackable items merge, and only by a key
@@ -102,6 +139,28 @@ function Scan.ClearItemCaches()
 	wipe(maxStackCache)
 	wipe(nameCache)
 	wipe(expacCache)
+	wipe(sellPriceCache)
+end
+
+--- Cached vendor sell price per itemID (shared with Transfers / Delete Cheapest).
+function Scan.GetSellPrice(itemID, hyperlink)
+	return GetSellPrice(itemID, hyperlink)
+end
+
+function Scan.RefreshUnusableAll()
+	local items = ns:GetModule("Items")
+	if items and items.scanner then
+		items.scanner:RefreshUnusable()
+	end
+	local bank = ns:GetModule("Bank")
+	if bank and bank.views then
+		for i = 1, #bank.views do
+			local scanner = bank.views[i].scanner
+			if scanner then
+				scanner:RefreshUnusable()
+			end
+		end
+	end
 end
 
 -- ---------------------------------------------------------------------------
@@ -260,11 +319,18 @@ local function IsEquipment(entry)
 	return entry.classID == ITEM_CLASS_WEAPON or entry.classID == ITEM_CLASS_ARMOR
 end
 
+local function SafeSortNumber(value, fallback)
+	if value == nil or F.IsSecret(value) then
+		return fallback
+	end
+	return value
+end
+
 local function SortValue(entry, key)
 	if key == "quality" then
-		return entry.quality or 0
+		return SafeSortNumber(entry.quality, 0)
 	elseif key == "invertedQuality" then
-		return -(entry.quality or 0)
+		return -SafeSortNumber(entry.quality, 0)
 	elseif key == "sortedClassID" then
 		return SortedLookup(SORTED_CLASS, entry.classID)
 	elseif key == "sortedInvSlotID" then
@@ -272,22 +338,28 @@ local function SortValue(entry, key)
 	elseif key == "sortedSubClassID" then
 		return SortedSubClassID(entry)
 	elseif key == "itemLevelRaw" then
-		return entry.ilvl or -1
+		return SafeSortNumber(entry.ilvl, -1)
 	elseif key == "invertedItemLevelRaw" then
-		return -(entry.ilvl or -1)
+		return -SafeSortNumber(entry.ilvl, -1)
 	elseif key == "invertedItemLevelEquipment" then
 		if IsEquipment(entry) then
-			return -(entry.ilvl or -1)
+			return -SafeSortNumber(entry.ilvl, -1)
 		end
 		return 0
 	elseif key == "invertedExpansion" then
-		return -(entry.expacID or 0)
+		return -SafeSortNumber(entry.expacID, 0)
 	elseif key == "itemName" then
 		return entry.name or ""
 	elseif key == "invertedItemID" then
-		return -(entry.itemID or 0)
+		return -SafeSortNumber(entry.itemID, 0)
 	elseif key == "invertedItemCount" then
-		return -(entry.count or 1)
+		return -SafeSortNumber(entry.count, 1)
+	elseif key == "invertedVendorValue" then
+		local price = entry.sellPrice
+		if price and F.NotSecret(price) then
+			return -price
+		end
+		return 0
 	end
 	return 0
 end
@@ -306,6 +378,14 @@ local function CompareKey(a, b, key)
 	return nil
 end
 
+local function CompareItemID(a, b)
+	local aid, bid = a.itemID, b.itemID
+	if aid and bid and F.NotSecret(aid) and F.NotSecret(bid) then
+		return aid < bid
+	end
+	return F.SlotKey(a.bag, a.slot) < F.SlotKey(b.bag, b.slot)
+end
+
 local function MakeKeyChainComparator(keys)
 	return function(a, b)
 		for i = 1, #keys do
@@ -314,7 +394,7 @@ local function MakeKeyChainComparator(keys)
 				return cmp
 			end
 		end
-		return a.itemID < b.itemID
+		return CompareItemID(a, b)
 	end
 end
 
@@ -325,6 +405,7 @@ local KEY_CHAINS = {
 	name = { "sortedClassID", "sortedInvSlotID", "sortedSubClassID", "invertedExpansion", "itemName", "invertedItemLevelRaw", "invertedQuality", "invertedItemID", "invertedItemCount" },
 	ilvl = { "invertedItemLevelEquipment", "sortedClassID", "sortedInvSlotID", "sortedSubClassID", "invertedExpansion", "invertedQuality", "invertedItemLevelRaw", "itemName", "invertedItemID", "invertedItemCount" },
 	expansion = { "invertedExpansion", "sortedClassID", "sortedInvSlotID", "sortedSubClassID", "invertedItemLevelRaw", "invertedQuality", "itemName", "invertedItemID", "invertedItemCount" },
+	vendor = { "invertedVendorValue", "invertedQuality", "sortedClassID", "sortedInvSlotID", "sortedSubClassID", "itemLevelRaw", "invertedExpansion", "itemName", "invertedItemID", "invertedItemCount" },
 }
 
 local WITHIN = {
@@ -332,13 +413,14 @@ local WITHIN = {
 	name = MakeKeyChainComparator(KEY_CHAINS.name),
 	ilvl = MakeKeyChainComparator(KEY_CHAINS.ilvl),
 	expansion = MakeKeyChainComparator(KEY_CHAINS.expansion),
+	vendor = MakeKeyChainComparator(KEY_CHAINS.vendor),
 }
 
 -- Swapped by Scan.SetSortMode; defaults to the historical quality-first chain.
 local activeWithin = WITHIN.quality
 
 -- Built-in modes; the rest of WITHIN is filled by plugins (Scan.RegisterWithin).
-local BUILTIN_WITHIN = { quality = true, name = true, ilvl = true, expansion = true }
+local BUILTIN_WITHIN = { quality = true, name = true, ilvl = true, expansion = true, vendor = true }
 
 --- Set the within-category item sort ("quality" | "name" | "ilvl" |
 --- "expansion", plus any plugin-registered key). Unknown values fall back to
@@ -359,7 +441,7 @@ function Scan.RegisterWithin(key, comparator)
 		if ok and type(res) == "boolean" then
 			return res
 		end
-		return a.itemID < b.itemID
+		return CompareItemID(a, b)
 	end
 	return true
 end
@@ -387,11 +469,15 @@ local function SafeCompare(a, b)
 	if a.category ~= b.category then
 		return a.category < b.category
 	end
-	return a.itemID < b.itemID
+	local aid, bid = a.itemID, b.itemID
+	if aid and bid and F.NotSecret(aid) and F.NotSecret(bid) then
+		return aid < bid
+	end
+	return SlotKey(a.bag, a.slot) < SlotKey(b.bag, b.slot)
 end
 
 local function SlotKey(bag, slot)
-	return bag * 1000 + slot
+	return F.SlotKey(bag, slot)
 end
 
 local function EntryIsNewItem(bag, slot, guid)
@@ -544,7 +630,11 @@ function meta:_Build(bags)
 				if itemInfo then
 					entry.bindLabel = itemInfo:GetBindLabel(entry)
 					entry.ilvl = itemInfo:GetItemLevel(entry)
+					CacheUnusable(entry, itemInfo)
+				else
+					entry.isUnusable = false
 				end
+				entry.sellPrice = GetSellPrice(info.itemID, info.hyperlink)
 				entry.category = categories and categories:GetCategory(entry) or L["Other"]
 				entry.categoryOrder = categories and categories:GetOrder(entry.category) or 100
 				self.slots[#self.slots + 1] = entry
@@ -562,7 +652,7 @@ function meta:_Build(bags)
 	-- A plugin sort comparator could be inconsistent; never let that abort the
 	-- whole scan. Fall back to a guaranteed stable order if table.sort throws.
 	if not pcall(tsort, self.slots, CompareEntries) then
-		tsort(self.slots, SafeCompare)
+		pcall(tsort, self.slots, SafeCompare)
 	end
 	self:_BuildSections()
 
@@ -743,6 +833,14 @@ function meta:RefreshLock(bag, slot)
 	return true
 end
 
+--- Refresh unusable tint cache on existing entries (toggle / level-up).
+function meta:RefreshUnusable()
+	local itemInfo = ns:GetModule("ItemInfo")
+	for i = 1, #self.slots do
+		CacheUnusable(self.slots[i], itemInfo)
+	end
+end
+
 --- Refresh quest overlay fields without reclassifying.
 function meta:RefreshQuestState()
 	for i = 1, #self.slots do
@@ -765,6 +863,7 @@ function meta:RefreshItemID(itemID)
 	maxStackCache[itemID] = nil
 	nameCache[itemID] = nil
 	expacCache[itemID] = nil
+	sellPriceCache[itemID] = nil
 
 	local entries = self.entriesByItemID[itemID]
 	if not entries or #entries == 0 then
@@ -790,7 +889,9 @@ function meta:RefreshItemID(itemID)
 		if itemInfo then
 			entry.bindLabel = itemInfo:GetBindLabel(entry)
 			entry.ilvl = itemInfo:GetItemLevel(entry)
+			CacheUnusable(entry, itemInfo)
 		end
+		entry.sellPrice = GetSellPrice(itemID, entry.hyperlink)
 		if categories then
 			local cat = categories:GetCategory(entry)
 			if cat ~= entry.category then

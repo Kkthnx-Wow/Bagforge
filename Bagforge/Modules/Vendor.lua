@@ -97,7 +97,7 @@ local function ShouldSell(info, db)
 	if not (isGrey or isCustom) then
 		return false
 	end
-	local price = select(11, C_Item.GetItemInfo(id))
+	local price = ns.Scan and ns.Scan.GetSellPrice and ns.Scan.GetSellPrice(id)
 	return price and F.NotSecret(price) and price > 0
 end
 
@@ -121,7 +121,7 @@ function SellStep()
 	for _, bag in ipairs(C.BACKPACK_BAGS) do
 		local numSlots = C_Container.GetContainerNumSlots(bag) or 0
 		for slot = 1, numSlots do
-			local key = bag * 1000 + slot
+			local key = F.SlotKey(bag, slot)
 			if not sellCache[key] then
 				sellCache[key] = true
 				local info = C_Container.GetContainerItemInfo(bag, slot)

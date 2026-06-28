@@ -44,7 +44,7 @@ local firstStart = true
 local currentSlots = {}
 
 local function SlotKey(bag, slot)
-	return bag * 1000 + slot
+	return F.SlotKey(bag, slot)
 end
 
 local function GUIDAccessible(guid)

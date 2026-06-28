@@ -39,6 +39,7 @@ local TAB_SLOT_SIZE = 37
 local TAB_SLOT_GAP = 6
 local TAB_PURCHASE_HEIGHT = 22
 local TAB_PURCHASE_GAP = 8
+local TAB_SELECTED_COLOR = { 0.35, 0.75, 1 }
 
 local BANK_TYPE_ACCOUNT = Enum.BankType and Enum.BankType.Account
 local MONEY_COIN_BUTTONS = { "GoldButton", "SilverButton", "CopperButton" }
@@ -62,7 +63,6 @@ local function TabSlot_OnEnter(button)
 	local BANK_TAB_EXPANSION_FILTER_CURRENT = _G["BANK_TAB_EXPANSION_FILTER_CURRENT"]
 	local BANK_TAB_EXPANSION_FILTER_LEGACY = _G["BANK_TAB_EXPANSION_FILTER_LEGACY"]
 	local BANK_TAB_DEPOSIT_ASSIGNMENTS = _G["BANK_TAB_DEPOSIT_ASSIGNMENTS"]
-
 	if button.depositFlags then
 		if FlagsUtil and FlagsUtil.IsSet then
 			if FlagsUtil.IsSet(button.depositFlags, Enum.BagSlotFlags.ExpansionCurrent) then
@@ -84,6 +84,12 @@ local function TabSlot_OnEnter(button)
 		end
 	end
 
+	if button.view and button.view.depositTargetBag == button.bagID then
+		GameTooltip:AddLine(L["Deposit tab selected"], 0.35, 0.75, 1)
+	else
+		GameTooltip:AddLine(L["Left-click to choose deposit tab"], 0.7, 0.7, 0.7)
+	end
+
 	GameTooltip:Show()
 
 	if button.bagID then
@@ -95,6 +101,13 @@ local function TabSlot_OnEnter(button)
 end
 
 local function TabSlot_OnClick(button, mouseButton)
+	if mouseButton == "LeftButton" then
+		local view = button.view
+		if view and button.bagID and view.SetDepositTargetBag then
+			view:SetDepositTargetBag(button.bagID)
+		end
+		return
+	end
 	if mouseButton == "RightButton" then
 		local BankFrame = _G["BankFrame"]
 		if BankFrame and BankFrame.BankTabSettingsMenu and BankFrame.BankTabSettingsMenu.OnOpenTabSettingsRequested then
@@ -142,6 +155,7 @@ function BankView.New(opts)
 		scanner = ns.Scan.New(),
 		bankBags = {},
 		categoryContainers = {},
+		depositTargetBag = nil,
 		activeCategories = {},
 		freeSlots = 0,
 		open = false,
@@ -420,16 +434,10 @@ function View:UpdateBankFooter()
 end
 
 function View:CanShow()
-	if self.bankType == (Enum.BankType and Enum.BankType.Account) then
-		if not Enum.BankType or not Enum.BankType.Account then
-			return false
-		end
-		if C_Bank and C_Bank.CanViewBank then
-			return C_Bank.CanViewBank(Enum.BankType.Account) and true or false
-		end
-		return false
+	if not (self.bankType and C_Bank and C_Bank.CanViewBank) then
+		return self.bankType ~= (Enum.BankType and Enum.BankType.Account)
 	end
-	return true
+	return C_Bank.CanViewBank(self.bankType) and true or false
 end
 
 function View:CanUse()
@@ -444,6 +452,55 @@ function View:SupportsAutoDeposit()
 		return C_Bank.DoesBankTypeSupportAutoDeposit(self.bankType) and true or false
 	end
 	return true
+end
+
+function View:GetDepositTargetBag()
+	if not (self.open and self:CanUse()) then
+		return nil
+	end
+	self:EnsureDepositTarget()
+	return self.depositTargetBag
+end
+
+function View:EnsureDepositTarget()
+	if self.depositTargetBag then
+		return
+	end
+	if self.tabSlots then
+		for i = 1, #self.tabSlots do
+			local bagID = self.tabSlots[i].bagID
+			if bagID then
+				self.depositTargetBag = bagID
+				return
+			end
+		end
+	end
+end
+
+function View:SetDepositTargetBag(bagID)
+	if not bagID or self.depositTargetBag == bagID then
+		return
+	end
+	self.depositTargetBag = bagID
+	self:UpdateTabBarSelection()
+end
+
+function View:UpdateTabBarSelection()
+	if not self.tabSlots then
+		return
+	end
+	local selected = self.depositTargetBag
+	for i = 1, #self.tabSlots do
+		local button = self.tabSlots[i]
+		local icon = button.icon
+		if icon then
+			if selected and button.bagID == selected then
+				icon:SetVertexColor(TAB_SELECTED_COLOR[1], TAB_SELECTED_COLOR[2], TAB_SELECTED_COLOR[3])
+			else
+				icon:SetVertexColor(1, 1, 1)
+			end
+		end
+	end
 end
 
 function View:GetBankBags()
@@ -689,6 +746,7 @@ function View:CreateTabSlotButton(parent, index)
 	button:SetSize(TAB_SLOT_SIZE, TAB_SLOT_SIZE)
 	button.tabIndex = index
 	button.bagID = self.staticBags[index]
+	button.view = self
 	button.icon = _G[name .. "IconTexture"]
 	button:RegisterForClicks("AnyUp")
 	button:SetScript("OnClick", TabSlot_OnClick)
@@ -737,6 +795,7 @@ function View:UpdateTabBar()
 		end
 		self:ResizeTabBar(purchase:IsShown())
 	end
+	self:UpdateTabBarSelection()
 end
 
 function View:ResizeTabBar(withPurchase)
@@ -756,6 +815,8 @@ function View:ApplyTabBarState()
 		self:AnchorTabBar()
 		self.tabBar:SetShown(ns.db.bank.showTabBar)
 		self:UpdateTabBar()
+		self:EnsureDepositTarget()
+		self:UpdateTabBarSelection()
 	end
 end
 
@@ -810,6 +871,7 @@ function View:DrawLayout()
 		mainSection = mainSection,
 		columns = cols,
 		perColumn = ns.db.bank.categoriesPerColumn,
+		layoutBatchSize = C.Layout.BANK_LAYOUT_BATCH,
 		mainLayoutOpts = {
 			topInset = C.Layout.MAIN_CHROME_TOP,
 			bottomInset = self:GetFooterBottomInset(),
@@ -840,6 +902,10 @@ function View:Close()
 		for _, container in pairs(self.categoryContainers) do
 			container:Reset()
 		end
+	end
+	local bank = ns:GetModule("Bank")
+	if bank and bank.NotifyBackpackBankContext then
+		bank:NotifyBackpackBankContext()
 	end
 end
 

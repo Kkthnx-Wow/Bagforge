@@ -53,6 +53,9 @@ local ItemButton = ns:NewModule("ItemButton")
 
 local buttonCount = 0
 local slotButtons = {}
+local slotsByBag = {}
+local combatLayoutPending = false
+local bankRouted = setmetatable({}, { __mode = "k" })
 
 local VALID_CORNERS = {
 	topleft = true,
@@ -104,13 +107,20 @@ function ItemButton:ApplyOverlayLayout()
 end
 
 local function SlotKey(bag, slot)
-	return bag * 1000 + slot
+	return F.SlotKey(bag, slot)
 end
 
 local function UnregisterSlot(parent)
 	local key = parent.slotKey
 	if key and slotButtons[key] == parent then
 		slotButtons[key] = nil
+	end
+	if parent._highlightBag then
+		local set = slotsByBag[parent._highlightBag]
+		if set then
+			set[parent] = nil
+		end
+		parent._highlightBag = nil
 	end
 	parent.slotKey = nil
 	parent.entry = nil
@@ -133,6 +143,19 @@ local function Button_SetItem(self, entry)
 	end
 	self.entry = entry
 	slotButtons[key] = self
+
+	local bag = entry.bag
+	if self._highlightBag and self._highlightBag ~= bag then
+		local old = slotsByBag[self._highlightBag]
+		if old then
+			old[self] = nil
+		end
+	end
+	self._highlightBag = bag
+	if not slotsByBag[bag] then
+		slotsByBag[bag] = {}
+	end
+	slotsByBag[bag][self] = true
 
 	self:SetID(entry.bag)
 	self.button:SetID(entry.slot)
@@ -169,6 +192,7 @@ local function Button_SetItem(self, entry)
 	end
 	-- Blizzard's bag search desaturates non-matching items in place (rather than
 	-- hiding them). entry.isFiltered comes from C_Container after SetItemSearch.
+	-- Run after context matching so deposit-context and search overlays compose.
 	if self.button.SetMatchesSearch then
 		local hide = ns.db and ns.db.organize and ns.db.organize.searchHideNonMatches
 		local matches = hide or not entry.isFiltered
@@ -217,9 +241,8 @@ local function Button_SetItem(self, entry)
 	end
 
 	-- Unusable tint: red the icon for items this class can't use / is too low
-	-- for. Mirrors Blizzard's own unusable cue. Skip when locked (Blizzard's
-	-- desaturation owns that case). ns.IsItemUnusable is nil when off.
-	if ns.IsItemUnusable and not entry.isLocked and ns.IsItemUnusable(entry) then
+	-- for. Resolved at scan time (entry.isUnusable) so render stays API-light.
+	if entry.isUnusable and not entry.isLocked then
 		SetItemButtonTextureVertexColor(self.button, RED and RED.r or 1, RED and RED.g or 0.1, RED and RED.b or 0.1)
 		self.button.bfUnfit = true
 	elseif self.button.bfUnfit then
@@ -353,6 +376,14 @@ end
 -- item up onto the cursor, so we ClearCursor() to drop it straight back before
 -- showing the menu - exactly how NDui's Favourite mode behaves.
 local function OnItemButtonClick(button, mouseButton)
+	if mouseButton == "RightButton" and bankRouted[button] then
+		bankRouted[button] = nil
+		if ClearCursor then
+			ClearCursor()
+		end
+		return
+	end
+
 	local parent = button:GetParent()
 	local entry = parent and parent.entry
 	if not entry then
@@ -465,7 +496,7 @@ function ItemButton:FlashFind(itemID)
 	local hits = 0
 	for _, parent in pairs(slotButtons) do
 		local entry = parent.entry
-		if entry and entry.itemID == itemID and parent:IsShown() then
+		if entry and F.NotSecret(entry.itemID) and entry.itemID == itemID and parent:IsShown() then
 			hits = hits + 1
 			self:FlashButton(parent.button)
 		end
@@ -479,6 +510,15 @@ end
 -- Pool plumbing
 -- ---------------------------------------------------------------------------
 local function CreateButton()
+	-- Never birth a secure ContainerFrameItemButtonTemplate mid-combat: a button
+	-- created under lockdown taints UseContainerItem (ADDON_ACTION_FORBIDDEN in
+	-- M+/Delves). The pre-warmed pool should cover normal counts; this guard is
+	-- the belt on Acquire() when the pool is somehow exhausted in combat.
+	if InCombatLockdown() then
+		ItemButton:FlagCombatLayoutPending()
+		return nil
+	end
+
 	buttonCount = buttonCount + 1
 	local name = "BagforgeItemButton" .. buttonCount
 
@@ -491,6 +531,28 @@ local function CreateButton()
 	button:RegisterForDrag("LeftButton")
 	button:RegisterForClicks("LeftButtonUp", "RightButtonUp")
 	button:HookScript("OnClick", OnItemButtonClick)
+
+	-- Right-click deposit routing while the bank is open: queue transfers to the
+	-- selected purchased tab instead of letting Blizzard scatter items. State lives
+	-- in a weak table so we never taint the secure template button table.
+	button:HookScript("PreClick", function(self, mouseButton)
+		if mouseButton ~= "RightButton" then
+			return
+		end
+		local parent = self:GetParent()
+		local srcBag = parent and parent:GetID()
+		local srcSlot = self:GetID()
+		if not (srcBag and srcSlot and srcSlot ~= 0) then
+			return
+		end
+		if not (C.IS_BACKPACK_BAG and C.IS_BACKPACK_BAG[srcBag]) then
+			return
+		end
+		local transfers = ns:GetModule("Transfers")
+		if transfers and transfers.QueueDeposit and transfers:QueueDeposit(srcBag, srcSlot) then
+			bankRouted[self] = true
+		end
+	end)
 
 	-- Item level: bottom-left, outlined, quality-coloured at paint time.
 	local itemLevelText = F.CreateFS(button, 12, "", "OVERLAY")
@@ -559,17 +621,38 @@ end
 -- When a button is released back to the pool, blank it so a stale icon never
 -- flashes when it's reused for a different item.
 local function ResetButton(parent)
+	if parent.button then
+		F.TooltipThrottleLeave(parent.button)
+	end
 	parent:ClearItem()
 	parent:SetParent(UIParent)
 end
 
 function ItemButton:SetBagHighlight(bagID, highlight)
-	for _, parent in pairs(slotButtons) do
-		local entry = parent.entry
-		if entry and entry.bag == bagID and parent:IsShown() then
-			if parent.button.BagIndicator then
-				parent.button.BagIndicator:SetShown(highlight and true or false)
-			end
+	local set = slotsByBag[bagID]
+	if not set then
+		return
+	end
+	for parent in pairs(set) do
+		if parent:IsShown() and parent.button and parent.button.BagIndicator then
+			parent.button.BagIndicator:SetShown(highlight and true or false)
+		end
+	end
+end
+
+function ItemButton:FlagCombatLayoutPending()
+	if combatLayoutPending then
+		return
+	end
+	combatLayoutPending = true
+	local backpack = ns:GetModule("Backpack")
+	if backpack then
+		backpack.pendingDraw = true
+	end
+	local bank = ns:GetModule("Bank")
+	if bank and bank.views then
+		for i = 1, #bank.views do
+			bank.views[i].pendingDraw = true
 		end
 	end
 end
@@ -577,10 +660,27 @@ end
 function ItemButton:OnEnable()
 	self.pool = F.CreatePool(CreateButton, ResetButton)
 
-	-- Backpack (~220 slots) plus a merged bank view can exceed 300 while both
-	-- windows are open; prewarm enough that no secure button is created in combat.
-	self.pool:Prewarm(650)
+	-- Pre-warm out of combat (OnEnable runs at PLAYER_LOGIN). Backpack (~220
+	-- slots) plus a merged bank view can exceed 300 while both windows are open.
+	local prewarm = C.Layout.ITEM_BUTTON_POOL_PREWARM or 400
+	self.pool:Prewarm(prewarm)
 	self:ApplyOverlayLayout()
+
+	ns:RegisterEvent("PLAYER_REGEN_ENABLED", function()
+		if not combatLayoutPending then
+			return
+		end
+		combatLayoutPending = false
+		-- Top up the pool while clean so the next in-combat refresh can't run dry.
+		if not InCombatLockdown() and ItemButton.pool then
+			local prewarm = C.Layout.ITEM_BUTTON_POOL_PREWARM or 400
+			local have = #ItemButton.pool.objects
+			if have < prewarm then
+				ItemButton.pool:Prewarm(prewarm - have)
+			end
+		end
+		ns:RefreshBags(false)
+	end)
 
 	if EventRegistry then
 		EventRegistry:RegisterCallback("BagSlot.OnEnter", function(_, bagSlotButton)
@@ -603,7 +703,20 @@ function ItemButton:OnEnable()
 end
 
 function ItemButton:Acquire()
-	return self.pool:Acquire()
+	local pool = self.pool
+	if not pool then
+		return nil
+	end
+	-- Reuse pooled buttons in combat; never grow the pool under lockdown.
+	if InCombatLockdown() and pool.numFree <= 0 then
+		self:FlagCombatLayoutPending()
+		return nil
+	end
+	local obj = pool:Acquire()
+	if not obj then
+		self:FlagCombatLayoutPending()
+	end
+	return obj
 end
 
 --- Release a single button back to the pool. Each category panel tracks and
@@ -624,7 +737,7 @@ function ItemButton:RefreshItemID(itemID)
 	end
 	for _, parent in pairs(slotButtons) do
 		local entry = parent.entry
-		if entry and entry.itemID == itemID then
+		if entry and F.NotSecret(entry.itemID) and entry.itemID == itemID then
 			parent:SetItemEntry(entry)
 		end
 	end
@@ -638,12 +751,15 @@ function ItemButton:RefreshSlot(bag, slot)
 	end
 
 	local info = C_Container.GetContainerItemInfo(bag, slot)
-	if not (info and info.itemID) then
+	if not (info and info.itemID and F.NotSecret(info.itemID)) then
 		return false
 	end
 
 	entry.isLocked = info.isLocked and true or false
 	button:SetItemEntry(entry)
+	if button.button and F.RefreshBagItemTooltipIfHovered then
+		F.RefreshBagItemTooltipIfHovered(button.button)
+	end
 	return true
 end
 

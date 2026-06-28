@@ -51,7 +51,8 @@ ns:RegisterDefaults({
 		searchEnable = true, -- honour saved search categories when classifying
 		searchHideNonMatches = false, -- hide (true) vs dim (false) non-matching search results
 		stackMerge = false, -- collapse identical stacks into one button
-		itemSort = "quality", -- within-category sort: quality|name|ilvl|expansion
+		showCategoryCounts = true, -- append item totals to category panel headers
+		itemSort = "quality", -- within-category sort: quality|name|ilvl|expansion|vendor
 		assignments = {}, -- [itemID] = categoryName  (O(1) classify lookup)
 		order = {}, -- [categoryName] = number  (pinned draw-order override)
 		colors = {}, -- [categoryName] = { r, g, b }  (panel header tint)
@@ -659,7 +660,7 @@ end
 -- ---------------------------------------------------------------------------
 -- Item sort + category manager window
 -- ---------------------------------------------------------------------------
-local SORT_MODES = { quality = true, name = true, ilvl = true, expansion = true }
+local SORT_MODES = { quality = true, name = true, ilvl = true, expansion = true, vendor = true }
 
 -- Valid if it's one of ours or an enabled plugin sort (Bagforge.API). Unknown or
 -- disabled modes fall back to quality so the scanner always has a real comparator.
@@ -999,13 +1000,12 @@ end
 -- ---------------------------------------------------------------------------
 -- Custom junk (NDui CustomJunkList): mark items as junk to group + auto-sell
 -- ---------------------------------------------------------------------------
---- Vendor sell price of an itemID (GetItemInfo field 11), secret-guarded.
+--- Vendor sell price of an itemID (cached via Scan).
 local function SellPrice(itemID)
-	local price = select(11, C_Item.GetItemInfo(itemID))
-	if price and F.NotSecret(price) then
-		return price
+	if not (itemID and F.NotSecret(itemID) and ns.Scan and ns.Scan.GetSellPrice) then
+		return 0
 	end
-	return 0
+	return ns.Scan.GetSellPrice(itemID) or 0
 end
 
 --- Toggle whether `itemID` is treated as junk. Only items with a vendor price
@@ -1299,6 +1299,7 @@ function Organize:RegisterOptions(category, builder)
 	builder:Checkbox(category, self, "searchEnable", L["Enable Search Categories"], L["Honour your saved search-query categories when sorting items."])
 	builder:Checkbox(category, self, "searchHideNonMatches", L["Hide Search Non-Matches"], L["Hide items that don't match the search box. Off dims them instead (Blizzard default)."])
 	builder:Checkbox(category, self, "stackMerge", L["Merge Stacks"], L["Show identical stackable items as a single button with the combined count."])
+	builder:Checkbox(category, self, "showCategoryCounts", L["Show Category Counts"], L["Append the number of items in each category panel header."])
 
 	builder:Header(L["Item Sort"])
 	local sortChoices = {
@@ -1306,6 +1307,7 @@ function Organize:RegisterOptions(category, builder)
 		{ value = "name", label = L["Name"] },
 		{ value = "ilvl", label = L["Item Level"] },
 		{ value = "expansion", label = L["Expansion"] },
+		{ value = "vendor", label = L["Vendor Value"] },
 	}
 	-- Append any enabled plugin sort modes (Bagforge.API:RegisterSortMode).
 	if ns.API and ns.API.GetSortChoices then

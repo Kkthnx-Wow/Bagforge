@@ -22,9 +22,23 @@ local ACCOUNT_BANK_DEPOSIT_BUTTON_LABEL = _G["ACCOUNT_BANK_DEPOSIT_BUTTON_LABEL"
 
 local BANK_TYPE_CHARACTER = Enum.BankType and Enum.BankType.Character
 local BANK_TYPE_ACCOUNT = Enum.BankType and Enum.BankType.Account
+local C_PlayerInteractionManager = C_PlayerInteractionManager
 
 local BankSession = ns.BankSession
 local BankView = ns.BankView
+
+--- Warband Bank Convergence (and other account-only banker NPCs) expose warband
+--- storage only. Blizzard gates character tabs with C_Bank.CanViewBank(Character).
+local function IsAccountBankerOnly()
+	if not (C_PlayerInteractionManager and C_PlayerInteractionManager.IsInteractingWithNpcOfType) then
+		return false
+	end
+	local accountBanker = Enum.PlayerInteractionType and Enum.PlayerInteractionType.AccountBanker
+	if not accountBanker then
+		return false
+	end
+	return C_PlayerInteractionManager.IsInteractingWithNpcOfType(accountBanker)
+end
 
 ns:RegisterDefaults({
 	bank = {
@@ -147,6 +161,13 @@ function Bank:IsViewAvailable(view)
 end
 
 function Bank:PickView()
+	if IsAccountBankerOnly() then
+		local warband = self:GetView("warband")
+		if warband and self:IsViewAvailable(warband) then
+			return warband
+		end
+	end
+
 	local last = ns.db.bank.lastView or "active"
 	local fallback
 	for i = 1, #self.views do
@@ -173,6 +194,15 @@ function Bank:OpenView()
 	end
 end
 
+--- Repaint the backpack when bank context changes (warband deposit dim overlay).
+function Bank:NotifyBackpackBankContext()
+	local backpack = ns:GetModule("Backpack")
+	if backpack and backpack.IsShown and backpack:IsShown() then
+		ns.DrawEpoch = (ns.DrawEpoch or 0) + 1
+		backpack:Draw()
+	end
+end
+
 function Bank:ShowView(view)
 	BankSession.SetSwitchingView(true)
 	for i = 1, #self.views do
@@ -184,6 +214,7 @@ function Bank:ShowView(view)
 	if not view then
 		BankSession.SetSwitchingView(false)
 		BankSession:RestoreBlizzardBankFrame()
+		self:NotifyBackpackBankContext()
 		return
 	end
 	ns.db.bank.lastView = view.enabledKey
@@ -193,6 +224,7 @@ function Bank:ShowView(view)
 	BankSession:SuppressBlizzardBankFrame(self)
 	BankSession:RefreshItemContext()
 	BankSession.SetSwitchingView(false)
+	self:NotifyBackpackBankContext()
 end
 
 function Bank:UpdateTabs()
@@ -201,15 +233,15 @@ function Bank:UpdateTabs()
 		return
 	end
 
-	-- Show the Bank / Warband strip when two views are enabled in settings, not
-	-- only when both pass CanViewBank right now (that API can flicker false while
-	-- the settings panel is open and would hide the strip mid-slider).
-	local enabledCount = 0
+	-- Hide unavailable views (convergence toy = character bank tab off). Keep the
+	-- strip visible when at least one tab remains so the active bank label still
+	-- shows (matches Blizzard's lone "Warband Bank" tab on account-only bankers).
+	local viewableCount = 0
 	for i = 1, #self.views do
 		local view = self.views[i]
 		if self:IsViewEnabled(view) then
-			enabledCount = enabledCount + 1
 			if self:IsViewAvailable(view) then
+				viewableCount = viewableCount + 1
 				open.tabStrip:ShowTab(view.enabledKey)
 			else
 				open.tabStrip:HideTab(view.enabledKey)
@@ -221,7 +253,7 @@ function Bank:UpdateTabs()
 
 	open.tabStrip:Resize()
 	open.tabStrip:Select(open.enabledKey)
-	open.tabStrip:SetShown(enabledCount > 1)
+	open.tabStrip:SetShown(viewableCount > 0)
 	open:AnchorTabBar()
 end
 

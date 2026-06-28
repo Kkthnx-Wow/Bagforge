@@ -21,6 +21,8 @@ local C_Item = C_Item
 local GetItemMaxStackSizeByID = C_Item.GetItemMaxStackSizeByID
 local C_Timer_After = C_Timer.After
 local ClearCursor = ClearCursor
+local CreateFrame = CreateFrame
+local GetTime = GetTime
 local InCombatLockdown = InCombatLockdown
 local ItemLocation = ItemLocation
 local MerchantFrame = _G["MerchantFrame"]
@@ -32,10 +34,18 @@ local pairs = pairs
 local select = select
 local wipe = wipe
 local format = string.format
+local floor = math.floor
 
 local BagSlotFlags = Enum.BagSlotFlags
 
 local STEP_DELAY = 0.15
+local IS_BACKPACK_BAG = C.IS_BACKPACK_BAG
+
+local transferQueue = {}
+local allocatedSlots = {}
+local queueEventFrame
+local depositDraining = false
+local lastNoBankSlotErrorAt = 0
 
 local STATUS = {
 	Complete = 0,
@@ -62,16 +72,197 @@ local function IsLocked(bag, slot)
 	return location and C_Item.DoesItemExist(location) and C_Item.IsLocked(location)
 end
 
+local function SlotKey(bag, slot)
+	return F.SlotKey(bag, slot)
+end
+
+local function StackLimit(itemID)
+	if GetItemMaxStackSizeByID then
+		local limit = GetItemMaxStackSizeByID(itemID)
+		if limit then
+			return limit
+		end
+	end
+	return select(8, C_Item.GetItemInfo(itemID)) or 1
+end
+
+local function EntrySellPrice(entry)
+	if not entry then
+		return nil
+	end
+	if entry.sellPrice and F.NotSecret(entry.sellPrice) then
+		return entry.sellPrice
+	end
+	local id = entry.itemID
+	if id and F.NotSecret(id) and ns.Scan and ns.Scan.GetSellPrice then
+		return ns.Scan.GetSellPrice(id, entry.hyperlink)
+	end
+	return nil
+end
+
 local function IsSellable(entry)
 	if not entry or entry.noValue or entry.isLocked then
 		return false
 	end
-	local id = entry.itemID
-	if not (id and F.NotSecret(id)) then
+	local price = EntrySellPrice(entry)
+	return price and F.NotSecret(price) and price > 0
+end
+
+-- Right-click deposit queue (flat allocatedSlots keyed by SlotKey).
+local function IsQueueAllocated(bag, slot)
+	return allocatedSlots[SlotKey(bag, slot)]
+end
+
+local function MarkQueueAllocated(bag, slot)
+	allocatedSlots[SlotKey(bag, slot)] = true
+end
+
+local function ClearDepositQueue()
+	wipe(transferQueue)
+	wipe(allocatedSlots)
+	depositDraining = false
+	if queueEventFrame then
+		queueEventFrame:UnregisterEvent("BAG_UPDATE")
+	end
+end
+
+local function ClearCompletedAllocations()
+	for key in pairs(allocatedSlots) do
+		local bag = floor(key / 1000)
+		local slot = key % 1000
+		if C_Container.GetContainerItemInfo(bag, slot) then
+			allocatedSlots[key] = nil
+		end
+	end
+end
+
+local function GetDepositTargetBag()
+	local bank = ns:GetModule("Bank")
+	if not (bank and bank.IsBankOpen and bank:IsBankOpen()) then
+		return nil
+	end
+	local view = bank.OpenView and bank:OpenView()
+	if not (view and view.open and view.GetDepositTargetBag) then
+		return nil
+	end
+	return view:GetDepositTargetBag()
+end
+
+local function FindTargetSlot(targetBag, itemID)
+	local numSlots = C_Container.GetContainerNumSlots(targetBag) or 0
+	if numSlots == 0 then
+		return nil
+	end
+	local maxStack = StackLimit(itemID)
+	if maxStack > 1 then
+		for slot = 1, numSlots do
+			if not IsQueueAllocated(targetBag, slot) then
+				local info = C_Container.GetContainerItemInfo(targetBag, slot)
+				if info and info.itemID and F.NotSecret(info.itemID) and info.itemID == itemID then
+					local count = info.stackCount or 1
+					if F.NotSecret(count) and count < maxStack then
+						return slot
+					end
+				end
+			end
+		end
+	end
+	for slot = 1, numSlots do
+		if not IsQueueAllocated(targetBag, slot) then
+			local info = C_Container.GetContainerItemInfo(targetBag, slot)
+			if not info or not info.itemID then
+				return slot
+			end
+			if F.IsSecret(info.itemID) then
+				-- Occupied but unreadable; do not treat as empty.
+			end
+		end
+	end
+	return nil
+end
+
+--- @return true moved or source gone; false retry later; nil permanent skip
+local function ProcessQueuedDeposit(srcBag, srcSlot)
+	if InCombatLockdown and InCombatLockdown() then
 		return false
 	end
-	local price = select(11, C_Item.GetItemInfo(id))
-	return price and F.NotSecret(price) and price > 0
+	local targetBag = GetDepositTargetBag()
+	if not targetBag then
+		return false
+	end
+	local location = SlotLocation(srcBag, srcSlot)
+	if not (location and C_Item.DoesItemExist(location)) then
+		return true
+	end
+	if C_Item.IsLocked(location) then
+		return false
+	end
+	local info = C_Container.GetContainerItemInfo(srcBag, srcSlot)
+	if not (info and info.itemID and F.NotSecret(info.itemID)) then
+		return nil
+	end
+	local targetSlot = FindTargetSlot(targetBag, info.itemID)
+	if not targetSlot then
+		local now = GetTime()
+		if now - lastNoBankSlotErrorAt > 2 and UIErrorsFrame then
+			lastNoBankSlotErrorAt = now
+			UIErrorsFrame:AddMessage(L["No empty bank slots available."], 1, 0.1, 0.1, 1)
+		end
+		return false
+	end
+	MarkQueueAllocated(targetBag, targetSlot)
+	ClearCursor()
+	C_Container.PickupContainerItem(srcBag, srcSlot)
+	C_Container.PickupContainerItem(targetBag, targetSlot)
+	ClearCursor()
+	return true
+end
+
+local function DrainDepositQueue()
+	if depositDraining then
+		return
+	end
+	if #transferQueue == 0 then
+		if not next(allocatedSlots) and queueEventFrame then
+			queueEventFrame:UnregisterEvent("BAG_UPDATE")
+		end
+		return
+	end
+	depositDraining = true
+
+	local function Step()
+		ClearCompletedAllocations()
+		if #transferQueue == 0 then
+			depositDraining = false
+			if not next(allocatedSlots) and queueEventFrame then
+				queueEventFrame:UnregisterEvent("BAG_UPDATE")
+			end
+			return
+		end
+		local entry = transferQueue[1]
+		local result = ProcessQueuedDeposit(entry[1], entry[2])
+		if result == true or result == nil then
+			table.remove(transferQueue, 1)
+		end
+		if #transferQueue == 0 and not next(allocatedSlots) then
+			depositDraining = false
+			if queueEventFrame then
+				queueEventFrame:UnregisterEvent("BAG_UPDATE")
+			end
+			return
+		end
+		C_Timer_After(STEP_DELAY, Step)
+	end
+
+	Step()
+end
+
+local function EnsureQueueEvents()
+	if not queueEventFrame then
+		queueEventFrame = CreateFrame("Frame")
+		queueEventFrame:SetScript("OnEvent", DrainDepositQueue)
+	end
+	queueEventFrame:RegisterEvent("BAG_UPDATE")
 end
 
 local function IsAllowedInBank(entry, bankType)
@@ -85,21 +276,11 @@ local function IsAllowedInBank(entry, bankType)
 	return C_Bank.IsItemAllowedInBankType(bankType, location) and true or false
 end
 
-local function StackLimit(itemID)
-	if GetItemMaxStackSizeByID then
-		local limit = GetItemMaxStackSizeByID(itemID)
-		if limit then
-			return limit
-		end
-	end
-	return select(8, C_Item.GetItemInfo(itemID)) or 1
-end
-
 local function SlotAllocated(allocated, bag, slot)
 	return allocated[bag] and allocated[bag][slot]
 end
 
-local function MarkAllocated(allocated, bag, slot)
+local function MarkCategoryAllocated(allocated, bag, slot)
 	allocated[bag] = allocated[bag] or {}
 	allocated[bag][slot] = true
 end
@@ -168,9 +349,6 @@ local function ScanBagSlot(source, bag, slot, allocated, stackOnly)
 		return nil
 	end
 	if not (info.itemID and F.NotSecret(info.itemID)) then
-		if not stackOnly then
-			return bag, slot
-		end
 		return nil
 	end
 	if info.isLocked or IsLocked(bag, slot) then
@@ -344,7 +522,7 @@ local function StepDeposit()
 			ClearCursor()
 			C_Container.PickupContainerItem(item.bag, item.slot)
 			C_Container.PickupContainerItem(targetBag, targetSlot)
-			MarkAllocated(running.allocated, targetBag, targetSlot)
+			MarkCategoryAllocated(running.allocated, targetBag, targetSlot)
 			ClearCursor()
 			running.count = running.count + 1
 			C_Timer_After(STEP_DELAY, StepDeposit)
@@ -361,9 +539,34 @@ end
 
 function Transfers:Cancel()
 	running = nil
+	ClearDepositQueue()
 	if ClearCursor then
 		ClearCursor()
 	end
+end
+
+--- Queue a backpack right-click deposit into the bank view's selected tab.
+--- Returns true when this addon handled routing (caller should cancel default).
+function Transfers:QueueDeposit(srcBag, srcSlot)
+	if not (IS_BACKPACK_BAG and IS_BACKPACK_BAG[srcBag]) then
+		return false
+	end
+	if InCombatLockdown and InCombatLockdown() then
+		return false
+	end
+	if not GetDepositTargetBag() then
+		return false
+	end
+	if self:IsBusy() then
+		return false
+	end
+	EnsureQueueEvents()
+	local result = ProcessQueuedDeposit(srcBag, srcSlot)
+	if result == false then
+		transferQueue[#transferQueue + 1] = { srcBag, srcSlot }
+		return true
+	end
+	return result == true
 end
 
 function Transfers:VendorCategory(categoryName, entries)
@@ -420,7 +623,12 @@ function Transfers:OnEnable()
 	end)
 	ns:RegisterEvent("BANKFRAME_CLOSED", function()
 		if running and running.kind == "deposit" then
-			self:Cancel()
+			if ClearCursor then
+				ClearCursor()
+			end
+			running = nil
 		end
+		ClearDepositQueue()
+		ns:RefreshBags(false)
 	end)
 end

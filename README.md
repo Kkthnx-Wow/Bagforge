@@ -79,6 +79,8 @@ Bagforge **replaces** the default combined-bags UI while enabled. Disable the ad
 | Quick-delete (below Rare) | Arm the delete button, then **Ctrl+Alt** left-click |
 | Delete cheapest item | Goblin-head button (left = confirm, right = preview in chat) |
 | Lock a slot from sorts/transfers | **Ctrl+right-click** a slot (padlock overlay) |
+| Deposit to selected bank tab | **Right-click** a backpack item while the bank is open (tab bar on; left-click a tab first) |
+| Select bank deposit tab | **Left-click** a purchased bank tab (blue highlight) |
 | Drop onto free slot | Click or drop an item on the trailing **free-slot** box |
 | Reset window position | **Right-click** the close button |
 | Equipped bag slots | Bag-bar toggle (backpack icon) |
@@ -117,9 +119,9 @@ Most toggles apply **live** without `/reload`.
 
 ### Bank
 
-- **Character bank** — categorized panels, deposit-all, sort, money footer, purchased-tab support.
-- **Warband bank** — separate categorized window for account storage.
-- **Bank tabs** — optional tab bar toggle.
+- **Character bank** — categorized panels, deposit-all, sort, money footer, purchased-tab support, right-click deposit queue to the selected tab.
+- **Warband bank** — separate categorized window for account storage; backpack items that cannot be deposited are dimmed while this view is open.
+- **Bank tabs** — optional tab bar toggle; left-click a tab to choose the deposit target.
 - **Deposit reagents** — syncs with Blizzard's `bankAutoDepositReagents` CVar for deposit-all behaviour.
 - **Shared layout engine** — same masonry column wrapping and category panels as the backpack.
 
@@ -137,7 +139,9 @@ Turn the master switch off to keep everything in one flat bag panel.
 - **Saved search categories** — rule-based panels using a compact query language (`type:glyph`, `gear ilvl>=600`, `tt:use:`, quality flags, name tokens, OR with `|`, NOT with `!`).
 - **Category Manager** — rename, recolour headers, reorder, enable/disable, import/export JSON, and delete custom/search categories.
 - **Stack merge** — collapse identical stacks into one button with combined count.
-- **Item sort** — quality, name, item level, expansion, plus plugin-registered sort modes.
+- **Category counts** — optional item totals in panel headers (e.g. `Reagents (142)`).
+- **Item sort** — quality, name, item level, expansion, **vendor value** (highest sell price first), plus plugin-registered sort modes.
+- **Junk panel value** — optional total vendor gold in the Junk header.
 - **Slot locks** — exclude slots from sort, deposit, and vendor sweeps.
 - **Search box** — filter the open view; optionally hide (or dim) non-matching items.
 
@@ -170,12 +174,23 @@ See `Core/API.lua` for the full contract (`API.version = 2`, pcall-guarded callb
 
 ---
 
+### Performance
+
+- **Pooled item buttons** — secure `ContainerFrameItemButtonTemplate` widgets are recycled instead of recreated every refresh; ~400 pre-warmed at login.
+- **Batched layout** — main and category panels place items in chunks (80 slots per frame) so opening a full bank does not hitch.
+- **Drag optimization** — item grids hide while dragging a window; tooltips clear on drag start.
+- **Tooltip throttle** — one shared hover poll (120ms) instead of per-slot timer churn; bulk refreshes only update the tooltip under the cursor.
+- **Event-driven scans** — `BAG_UPDATE_DELAYED` debounce; no per-frame bag polling.
+
+---
+
 ## Midnight (12.0) compatibility
 
 Bagforge targets **Midnight retail** (`Interface: 120000+`). Secret Values are respected:
 
 - No arithmetic or comparisons on combat/instance-secret data without `issecretvalue` guards.
-- Tooltips use throttled rebuilds and Blizzard mixin paths where available.
+- Tooltips use throttled rebuilds, `pcall` wrappers around Blizzard mixin paths, and safe fallbacks when comparison/money lines are secret.
+- Backpack gold hides automatically when `GetMoney()` is secret (combat loot).
 - Quest objective counts, money, GUIDs, and similar APIs are handled with safe fallbacks.
 
 Test thoroughly in combat, dungeons, and Mythic+ before relying on search queries that read tooltip text (`tt:` tokens cache for 60 seconds per slot).

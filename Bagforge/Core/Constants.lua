@@ -189,6 +189,7 @@ C.Layout = {
 	BACKPACK_LAYOUT_BATCH = 80,
 	-- Secure item buttons pre-created at login (backpack + bank while both open).
 	ITEM_BUTTON_POOL_PREWARM = 400,
+	ITEM_BUTTON_POOL_MAX = 900,
 
 	-- Blizzard BankFrame UIPanel slot (area=left; UIParent LEFT_OFFSET=16, TOP_OFFSET=-116).
 	BANK_DEFAULT_POINT = "LEFT",
@@ -196,3 +197,22 @@ C.Layout = {
 	BANK_DEFAULT_X = 16,
 	BANK_DEFAULT_Y = -116,
 }
+
+--- Estimate how many secure item buttons to pre-warm from the player's actual
+--- bag slot counts (Baganator/BetterBags: avoid pool exhaustion when bank opens).
+function C.EstimateItemButtonPoolSize()
+	local C_Container = C_Container
+	if not C_Container or not C_Container.GetContainerNumSlots then
+		return C.Layout.ITEM_BUTTON_POOL_PREWARM or 400
+	end
+	local total = 0
+	for _, bag in ipairs(C.BACKPACK_BAGS) do
+		total = total + (C_Container.GetContainerNumSlots(bag) or 0)
+	end
+	for _, bag in ipairs(C.CHARACTER_BANK_BAGS) do
+		total = total + (C_Container.GetContainerNumSlots(bag) or 98)
+	end
+	local floor = C.Layout.ITEM_BUTTON_POOL_PREWARM or 400
+	local cap = C.Layout.ITEM_BUTTON_POOL_MAX or 900
+	return math.min(math.max(total, floor), cap)
+end

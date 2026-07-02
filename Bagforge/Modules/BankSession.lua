@@ -43,9 +43,8 @@ function BankSession:EnsureBankPanel(view)
 	panel:SetAlpha(0)
 	panel:EnableMouse(false)
 	panel:EnableKeyboard(false)
-	if panel.MoneyFrame then
-		panel.MoneyFrame:Hide()
-	end
+	-- MoneyFrame stays shown (panel is alpha 0) so withdraw/deposit secure proxies
+	-- stay enabled; BagforgeView configures it via F.PrepareBlizzardBankMoneyButtons.
 	if panel.AutoDepositFrame then
 		panel.AutoDepositFrame:Hide()
 	end
@@ -55,6 +54,9 @@ function BankSession:EnsureBankPanel(view)
 	panel:Show()
 	if panel.SetBankType and view.bankType then
 		panel:SetBankType(view.bankType)
+	end
+	if view.ConfigureSecureBankButtons then
+		view:ConfigureSecureBankButtons()
 	end
 end
 

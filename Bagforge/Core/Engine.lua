@@ -22,6 +22,7 @@ local IsLoggedIn = IsLoggedIn
 local tinsert = table.insert
 local format = string.format
 local C_AddOns = C_AddOns
+local C_Timer = C_Timer
 
 -- ---------------------------------------------------------------------------
 -- Metadata
@@ -198,6 +199,20 @@ function ns:TriggerCallback(signal, ...)
 	end
 end
 
+--- Remove every callback registered for `owner` on `signal` (method or function).
+function ns:UnregisterCallback(signal, owner)
+	local list = signalCallbacks[signal]
+	if not list or not owner then
+		return
+	end
+	for i = #list, 1, -1 do
+		local cb = list[i]
+		if cb and cb[2] == owner then
+			table.remove(list, i)
+		end
+	end
+end
+
 -- ---------------------------------------------------------------------------
 -- Lifecycle
 --   ADDON_LOADED -> Initialize() : saved variables are ready, build the DB
@@ -233,6 +248,54 @@ local function Enable()
 		if module:IsEnabled() then
 			RunCallback(module, "OnEnable")
 		end
+	end
+end
+
+-- ---------------------------------------------------------------------------
+-- Bag sort gate (BetterBags / EUI pattern)
+--   Blizzard sort moves many slots; suppress full rescans until the burst of
+--   BAG_UPDATE_DELAYED events settles, then flush one coordinated refresh.
+-- ---------------------------------------------------------------------------
+local sortFlushTimer
+local sortFlushParts = {}
+
+function ns:BeginBagSort()
+	self._bagSortActive = true
+	self:ScheduleBagSortFlush()
+end
+
+function ns:IsBagSortActive()
+	return self._bagSortActive
+end
+
+--- Register a post-sort flush (e.g. backpack + bank). Multiple callers share
+--- one trailing timer so neither overwrites the other.
+function ns:ScheduleBagSortFlush(part, callback)
+	if part and callback then
+		sortFlushParts[part] = callback
+	end
+	if sortFlushTimer and sortFlushTimer.Cancel then
+		sortFlushTimer:Cancel()
+	end
+	sortFlushTimer = C_Timer.NewTimer(0.35, function()
+		sortFlushTimer = nil
+		self._bagSortActive = false
+		for _, fn in pairs(sortFlushParts) do
+			fn()
+		end
+		wipe(sortFlushParts)
+	end)
+end
+
+--- Toggle a module's runtime hooks after login (settings `enable` / `active`).
+function ns:ApplyModuleEnable(module, shouldEnable)
+	if not initialized or not enabled or not module then
+		return
+	end
+	if shouldEnable then
+		RunCallback(module, "OnEnable")
+	else
+		RunCallback(module, "OnDisable")
 	end
 end
 

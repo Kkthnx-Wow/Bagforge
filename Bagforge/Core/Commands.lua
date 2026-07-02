@@ -30,6 +30,7 @@ local function ShowHelp()
 	F.Print("  " .. L["cat <add|remove|clear|order|list> - Manage custom categories"])
 	F.Print("  " .. L["junk <add|remove|clear|list> - Manage custom junk"])
 	F.Print("  " .. L["testextslots [on|off] - Preview authenticator backpack slots"])
+	F.Print("  " .. L["debugmoney [on|off|dump] - Warband bank gold transfer diagnostics"])
 end
 
 local exactCommands = {
@@ -186,6 +187,29 @@ local prefixCommands = {
 		end
 		container.SetExtendedSlotsTestOverride(enable)
 		F.Print(format(L["Extended backpack slots preview %s."], enable and L["on"] or L["off"]))
+	end,
+	debugmoney = function(value)
+		value = (value or ""):lower()
+		if value == "dump" then
+			local wasOn = F.BankMoneyDebugEnabled()
+			F.SetBankMoneyDebug(true)
+			F.DebugBankMoneyDumpAll()
+			F.SetBankMoneyDebug(wasOn)
+			return
+		end
+		local enable
+		if value == "on" or value == "1" or value == "true" then
+			enable = true
+		elseif value == "off" or value == "0" or value == "false" then
+			enable = false
+		else
+			enable = not F.BankMoneyDebugEnabled()
+		end
+		F.SetBankMoneyDebug(enable)
+		F.Print(format(L["Bank money debug %s."], enable and L["on"] or L["off"]))
+		if enable then
+			F.DebugBankMoneyDumpAll()
+		end
 	end,
 }
 

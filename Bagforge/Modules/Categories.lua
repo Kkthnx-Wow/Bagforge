@@ -259,13 +259,13 @@ local function IsWarbound(entry)
 	-- repeated calls per draw are free; a ContinuableContainer rebuild will
 	-- overwrite with the same value once ItemInfo resolves it properly.
 	if entry.bag and entry.slot and C_TooltipInfo and C_TooltipInfo.GetBagItem and BIND then
-		local data = C_TooltipInfo.GetBagItem(entry.bag, entry.slot)
-		if data and data.lines then
+		local ok, data = pcall(C_TooltipInfo.GetBagItem, entry.bag, entry.slot)
+		if ok and data and data.lines then
 			for i = 2, #data.lines do
 				local line = data.lines[i]
 				if line.type == LINE_ITEM_BINDING then
 					local bonding = line.bonding
-					if bonding == BIND.AccountUntilEquipped or bonding == BIND.BindToAccountUntilEquipped then
+					if F.NotSecret(bonding) and (bonding == BIND.AccountUntilEquipped or bonding == BIND.BindToAccountUntilEquipped) then
 						entry.bindLabel = "WuE"
 						return true
 					end

@@ -30,6 +30,7 @@
 Core\Engine.lua
 Core\Constants.lua
 Core\Functions.lua
+Core\TooltipGuards.lua
 Core\Database.lua
 Core\Scan.lua
 Core\Search.lua
@@ -54,8 +55,8 @@ Modules\Categories.lua
 Modules\Organize.lua
 Modules\CategoryManager.lua
 Modules\Recent.lua
-Modules\Items.lua
 Modules\ItemInfo.lua
+Modules\Items.lua
 Modules\ItemButton.lua
 Modules\Container.lua
 Modules\ContainerWindow.lua

@@ -39,6 +39,9 @@ local RARE_QUALITY = Enum.ItemQuality.Rare
 local HEIRLOOM_QUALITY = Enum.ItemQuality.Heirloom
 local QUALITY_COLORS = ns.C.QualityColors
 local RED = _G["RED_FONT_COLOR"]
+local UNUSABLE_TINT_R = 0.9
+local UNUSABLE_TINT_G = 0
+local UNUSABLE_TINT_B = 0
 
 -- Bind labels are coloured like NexEnhance: account-bound variants in light
 -- blue, everything else (BoE/BoU) plain white.
@@ -56,6 +59,20 @@ local slotButtons = {}
 local slotsByBag = {}
 local combatLayoutPending = false
 local bankRouted = setmetatable({}, { __mode = "k" })
+local highlightedBagID = nil
+
+local function ClearBagHighlightFor(bagID)
+	local set = slotsByBag[bagID]
+	if not set then
+		return
+	end
+	for parent in pairs(set) do
+		local button = parent.button
+		if button and button.BagIndicator then
+			button.BagIndicator:Hide()
+		end
+	end
+end
 
 local VALID_CORNERS = {
 	topleft = true,
@@ -134,6 +151,40 @@ end
 --   hundreds doesn't cost hundreds of duplicate closures.
 -- ---------------------------------------------------------------------------
 
+--- Red icon tint for wrong-class / under-level gear. Runs last so cooldown
+--- updates and corner widgets don't stomp the vertex colour afterward.
+local function ApplyUnusableTint(parent, entry)
+	if not (parent and parent.button and entry) then
+		return
+	end
+	local button = parent.button
+	local itemInfoDb = ns.db and ns.db.itemInfo
+	local showUnusable = itemInfoDb and itemInfoDb.enable and itemInfoDb.unusable
+	if not showUnusable or entry.isLocked then
+		if button.bfUnfit then
+			SetItemButtonTextureVertexColor(button, 1, 1, 1)
+			button.bfUnfit = nil
+		end
+		return
+	end
+
+	local unfit = entry.isUnusable
+	if not unfit and ns.CheckItemUnusable then
+		unfit = ns.CheckItemUnusable(entry) and true or false
+		if unfit then
+			entry.isUnusable = true
+		end
+	end
+
+	if unfit then
+		SetItemButtonTextureVertexColor(button, RED and RED.r or UNUSABLE_TINT_R, RED and RED.g or UNUSABLE_TINT_G, RED and RED.b or UNUSABLE_TINT_B)
+		button.bfUnfit = true
+	elseif button.bfUnfit then
+		SetItemButtonTextureVertexColor(button, 1, 1, 1)
+		button.bfUnfit = nil
+	end
+end
+
 -- `entry` is one slot record from Items:GetSlots().
 local function Button_SetItem(self, entry)
 	local key = SlotKey(entry.bag, entry.slot)
@@ -169,7 +220,9 @@ local function Button_SetItem(self, entry)
 	-- choke on.
 	SetItemButtonCount(self.button, F.NotSecret(entry.count) and entry.count or 1)
 	-- Stock quality ring (suppressOverlays = false) - Blizzard's default look.
-	SetItemButtonQuality(self.button, entry.quality, entry.hyperlink, false, entry.isBound)
+	if F.NotSecret(entry.quality) then
+		SetItemButtonQuality(self.button, entry.quality, entry.hyperlink, false, entry.isBound)
+	end
 	SetItemButtonDesaturated(self.button, entry.isLocked)
 
 	self.button:SetHasItem(entry.icon)
@@ -240,16 +293,6 @@ local function Button_SetItem(self, entry)
 		end
 	end
 
-	-- Unusable tint: red the icon for items this class can't use / is too low
-	-- for. Resolved at scan time (entry.isUnusable) so render stays API-light.
-	if entry.isUnusable and not entry.isLocked then
-		SetItemButtonTextureVertexColor(self.button, RED and RED.r or 1, RED and RED.g or 0.1, RED and RED.b or 0.1)
-		self.button.bfUnfit = true
-	elseif self.button.bfUnfit then
-		SetItemButtonTextureVertexColor(self.button, 1, 1, 1)
-		self.button.bfUnfit = nil
-	end
-
 	-- Pawn (or any plugin corner widget) may show an upgrade arrow via API.
 	local upgradeIcon = self.button.upgradeIcon
 	if upgradeIcon then
@@ -292,6 +335,12 @@ local function Button_SetItem(self, entry)
 		end
 	end
 
+	ApplyUnusableTint(self, entry)
+
+	if ns.API and ns.API._FireItemButtonCallbacks then
+		ns.API:_FireItemButtonCallbacks(self.button, entry.bag, entry.slot, entry)
+	end
+
 	self.button:Show()
 end
 
@@ -324,6 +373,12 @@ local function Button_Clear(self)
 	if self.button.UpdateCooldown then
 		self.button:UpdateCooldown(false)
 	end
+	if self.button.SetMatchesSearch then
+		self.button:SetMatchesSearch(true)
+	end
+	if self.button.UpdateItemContextMatching then
+		self.button:UpdateItemContextMatching()
+	end
 	if self.button.SetReadable then
 		self.button:SetReadable(false)
 	end
@@ -347,8 +402,14 @@ local function Button_Clear(self)
 	if self.button.bfSortLock then
 		self.button.bfSortLock:Hide()
 	end
+	if self.button.BagIndicator then
+		self.button.BagIndicator:Hide()
+	end
 	if ItemButton.HideCornerWidgets then
 		ItemButton:HideCornerWidgets(self.button)
+	end
+	if self.button.TLHOverlay then
+		self.button.TLHOverlay:Hide()
 	end
 end
 
@@ -628,14 +689,36 @@ local function ResetButton(parent)
 	parent:SetParent(UIParent)
 end
 
+function ItemButton:ClearBagHighlight()
+	if highlightedBagID ~= nil then
+		ClearBagHighlightFor(highlightedBagID)
+		highlightedBagID = nil
+	end
+end
+
 function ItemButton:SetBagHighlight(bagID, highlight)
-	local set = slotsByBag[bagID]
-	if not set then
+	if not bagID then
 		return
 	end
-	for parent in pairs(set) do
-		if parent:IsShown() and parent.button and parent.button.BagIndicator then
-			parent.button.BagIndicator:SetShown(highlight and true or false)
+	if highlight then
+		if highlightedBagID ~= nil and highlightedBagID ~= bagID then
+			ClearBagHighlightFor(highlightedBagID)
+		end
+		highlightedBagID = bagID
+		local set = slotsByBag[bagID]
+		if not set then
+			return
+		end
+		for parent in pairs(set) do
+			if parent:IsShown() and parent.button and parent.button.BagIndicator then
+				parent.button.BagIndicator:Show()
+			end
+		end
+	else
+		if highlightedBagID == bagID then
+			self:ClearBagHighlight()
+		else
+			ClearBagHighlightFor(bagID)
 		end
 	end
 end
@@ -657,14 +740,33 @@ function ItemButton:FlagCombatLayoutPending()
 	end
 end
 
+function ItemButton:RefreshCooldowns()
+	for _, parent in pairs(slotButtons) do
+		local button = parent.button
+		local entry = parent.entry
+		if button and button:IsShown() and entry and button.UpdateCooldown then
+			button:UpdateCooldown(entry.icon)
+			ApplyUnusableTint(parent, entry)
+		end
+	end
+end
+
 function ItemButton:OnEnable()
 	self.pool = F.CreatePool(CreateButton, ResetButton)
 
-	-- Pre-warm out of combat (OnEnable runs at PLAYER_LOGIN). Backpack (~220
-	-- slots) plus a merged bank view can exceed 300 while both windows are open.
-	local prewarm = C.Layout.ITEM_BUTTON_POOL_PREWARM or 400
+	-- Pre-warm out of combat (OnEnable runs at PLAYER_LOGIN). Size from the
+	-- player's real slot counts so backpack + bank open won't exhaust the pool.
+	local prewarm = C.EstimateItemButtonPoolSize and C.EstimateItemButtonPoolSize() or C.Layout.ITEM_BUTTON_POOL_PREWARM or 400
 	self.pool:Prewarm(prewarm)
 	self:ApplyOverlayLayout()
+
+	F.BucketEvent("BAG_UPDATE_COOLDOWN", 0.2, function()
+		local items = ns:GetModule("Items")
+		if items and items.AnyWindowOpen and not items:AnyWindowOpen() then
+			return
+		end
+		ItemButton:RefreshCooldowns()
+	end)
 
 	ns:RegisterEvent("PLAYER_REGEN_ENABLED", function()
 		if not combatLayoutPending then
@@ -673,7 +775,7 @@ function ItemButton:OnEnable()
 		combatLayoutPending = false
 		-- Top up the pool while clean so the next in-combat refresh can't run dry.
 		if not InCombatLockdown() and ItemButton.pool then
-			local prewarm = C.Layout.ITEM_BUTTON_POOL_PREWARM or 400
+			local prewarm = C.EstimateItemButtonPoolSize and C.EstimateItemButtonPoolSize() or C.Layout.ITEM_BUTTON_POOL_PREWARM or 400
 			local have = #ItemButton.pool.objects
 			if have < prewarm then
 				ItemButton.pool:Prewarm(prewarm - have)
@@ -684,6 +786,10 @@ function ItemButton:OnEnable()
 
 	if EventRegistry then
 		EventRegistry:RegisterCallback("BagSlot.OnEnter", function(_, bagSlotButton)
+			local backpack = ns:GetModule("Backpack")
+			if not (backpack and backpack.frame and backpack.frame:IsShown()) then
+				return
+			end
 			if bagSlotButton and type(bagSlotButton.GetBagID) == "function" then
 				local bagID = bagSlotButton:GetBagID()
 				if bagID then

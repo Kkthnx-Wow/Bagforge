@@ -23,6 +23,7 @@ local ACCOUNT_BANK_DEPOSIT_BUTTON_LABEL = _G["ACCOUNT_BANK_DEPOSIT_BUTTON_LABEL"
 local BANK_TYPE_CHARACTER = Enum.BankType and Enum.BankType.Character
 local BANK_TYPE_ACCOUNT = Enum.BankType and Enum.BankType.Account
 local C_PlayerInteractionManager = C_PlayerInteractionManager
+local wipe = wipe
 
 local BankSession = ns.BankSession
 local BankView = ns.BankView
@@ -53,6 +54,8 @@ ns:RegisterDefaults({
 		positions = {},
 	},
 })
+
+ns:RegisterDefaults({ bankMoneyDebug = false }, "global")
 
 local Bank = ns:NewModule("Bank", "bank")
 Bank.title = L["Bank"]
@@ -88,6 +91,22 @@ function Bank:RefreshIfOpen()
 	end
 	for i = 1, #self.views do
 		self.views[i]:RefreshIfOpen()
+	end
+end
+
+--- Repaint purchased-tab icons/names after Blizzard updates tab metadata.
+function Bank:RefreshTabBars(bankType)
+	if not self.views then
+		return
+	end
+	for i = 1, #self.views do
+		local view = self.views[i]
+		if view.open and (not bankType or view.bankType == bankType) then
+			if view.tabSettingsMenu and view.tabSettingsMenu:IsShown() then
+				view.tabSettingsMenu:Hide()
+			end
+			view:UpdateTabBar()
+		end
 	end
 end
 
@@ -145,6 +164,42 @@ function Bank:RefreshItemID(itemID)
 			view.scanner:RefreshItemID(itemID)
 		end
 	end
+end
+
+local function MarkAllBankBagsDirty(dirtyBags)
+	for _, bag in ipairs(C.CHARACTER_BANK_BAGS) do
+		dirtyBags[bag] = true
+	end
+	for _, bag in ipairs(C.ACCOUNT_BANK_BAGS) do
+		dirtyBags[bag] = true
+	end
+end
+
+local function DirtyBagsAffectOpenView(dirtyBags)
+	local open = Bank:OpenView()
+	if not open or not next(dirtyBags) then
+		return false
+	end
+	local bags = open:GetBankBags()
+	for i = 1, #bags do
+		if dirtyBags[bags[i]] then
+			return true
+		end
+	end
+	return false
+end
+
+local function FlushBankRefresh(dirtyBags)
+	if not Bank:OpenView() then
+		wipe(dirtyBags)
+		return
+	end
+	if not DirtyBagsAffectOpenView(dirtyBags) then
+		wipe(dirtyBags)
+		return
+	end
+	wipe(dirtyBags)
+	Bank:RefreshIfOpen()
 end
 
 function Bank:GetView(enabledKey)
@@ -337,6 +392,13 @@ function Bank:OnSettingChanged(key)
 
 	-- Enable/disable toggles may need to swap or hide a view while banking.
 	if key == "active" or key == "warband" then
+		if self:IsRuntimeActive() then
+			if not self._hooksInstalled then
+				self:OnEnable()
+			end
+		else
+			self:OnDisable()
+		end
 		if self:IsBankOpen() or self:OpenView() then
 			self:OpenBanking()
 		end
@@ -375,23 +437,14 @@ function Bank:RegisterOptions(category, builder)
 	builder:Checkbox(category, self, "showTabBar", L["Bank Tabs"], L["Toggle the bank tabs."])
 end
 
-function Bank:OnEnable()
-	if not ns.db.bank.windowPos then
-		local old = ns.db.bank.position
-		if not old and ns.db.bank.positions then
-			old = ns.db.bank.positions[BANK_TYPE_CHARACTER] or ns.db.bank.positions[BANK_TYPE_ACCOUNT]
-		end
-		if old then
-			ns.db.bank.windowPos = old
-		end
-	end
-	ns.db.bank.position = nil
-	ns.db.bank.positions = nil
+function Bank:IsRuntimeActive()
+	return ns.db.bank.active or ns.db.bank.warband
+end
 
-	if GetCVarBool then
-		ns.db.bank.depositReagents = GetCVarBool("bankAutoDepositReagents") and true or false
+function Bank:EnsureViews()
+	if self.views and #self.views > 0 then
+		return
 	end
-	self:ApplyDepositReagents()
 
 	self.views = {}
 	self.views[#self.views + 1] = BankView.New({
@@ -433,35 +486,71 @@ function Bank:OnEnable()
 	end
 	BankSession:InstallCloseHooks(self.views)
 	BankSession:InstallBankFrameHooks(self)
+end
 
-	ns:RegisterCallback("Bank.Refresh", "RefreshIfOpen", self)
+function Bank:InstallHooks()
+	local dirtyBankBags = {}
+	self._hookHandles = {}
 
-	self:RegisterEvent("BANKFRAME_OPENED", function()
+	local function track(event, callback)
+		self._hookHandles[#self._hookHandles + 1] = { event = event, callback = callback }
+	end
+
+	local queueRefresh = F.DebounceTrailingNoArgs(0.05, function()
+		if ns:IsBagSortActive() then
+			ns:ScheduleBagSortFlush("bank", function()
+				FlushBankRefresh(dirtyBankBags)
+			end)
+			return
+		end
+		FlushBankRefresh(dirtyBankBags)
+	end)
+
+	track("BAG_UPDATE", ns:RegisterEvent("BAG_UPDATE", function(_, bagID)
+		if bagID and (C.IS_CHARACTER_BANK_BAG[bagID] or C.IS_ACCOUNT_BANK_BAG[bagID]) then
+			dirtyBankBags[bagID] = true
+			queueRefresh()
+		end
+	end))
+
+	track("BANKFRAME_OPENED", self:RegisterEvent("BANKFRAME_OPENED", function()
 		Bank:OpenBanking()
-	end)
-	self:RegisterEvent("BANKFRAME_CLOSED", function()
+	end))
+	track("BANKFRAME_CLOSED", self:RegisterEvent("BANKFRAME_CLOSED", function()
 		Bank:CloseAll()
-	end)
+	end))
+	track("BANK_TABS_CHANGED", self:RegisterEvent("BANK_TABS_CHANGED", function(_, bankType)
+		MarkAllBankBagsDirty(dirtyBankBags)
+		queueRefresh()
+		Bank:RefreshTabBars(bankType)
+	end))
+	track("PLAYERBANKSLOTS_CHANGED", self:RegisterEvent("PLAYERBANKSLOTS_CHANGED", function()
+		MarkAllBankBagsDirty(dirtyBankBags)
+		queueRefresh()
+	end))
+	track("PLAYER_ACCOUNT_BANK_TAB_SLOTS_CHANGED", self:RegisterEvent("PLAYER_ACCOUNT_BANK_TAB_SLOTS_CHANGED", function()
+		MarkAllBankBagsDirty(dirtyBankBags)
+		queueRefresh()
+	end))
+	track("BANK_TAB_SETTINGS_UPDATED", self:RegisterEvent("BANK_TAB_SETTINGS_UPDATED", function(_, bankType)
+		Bank:RefreshTabBars(bankType)
+		MarkAllBankBagsDirty(dirtyBankBags)
+		queueRefresh()
+	end))
+	track("BANK_BAG_SLOT_FLAGS_UPDATED", self:RegisterEvent("BANK_BAG_SLOT_FLAGS_UPDATED", function(_, bankType)
+		Bank:RefreshTabBars(bankType)
+	end))
+	track("BAG_UPDATE_DELAYED", ns:RegisterEvent("BAG_UPDATE_DELAYED", queueRefresh))
 
-	local queueRefresh = F.DebounceNoArgs(0.05, function()
-		Bank:RefreshIfOpen()
-	end)
-	self:RegisterEvent("BANK_TABS_CHANGED", queueRefresh)
-	self:RegisterEvent("PLAYERBANKSLOTS_CHANGED", queueRefresh)
-	self:RegisterEvent("PLAYER_ACCOUNT_BANK_TAB_SLOTS_CHANGED", queueRefresh)
-	ns:RegisterEvent("BAG_UPDATE_DELAYED", queueRefresh)
-
-	-- Search only desaturates items in place; refresh the filter flags on the
-	-- open view's existing scan and relayout instead of a full rescan/redraw.
 	local queueSearch = F.DebounceNoArgs(0.05, function()
 		local open = Bank:OpenView()
 		if open and open.RefreshFiltered then
 			open:RefreshFiltered()
 		end
 	end)
-	ns:RegisterEvent("INVENTORY_SEARCH_UPDATE", queueSearch)
+	track("INVENTORY_SEARCH_UPDATE", ns:RegisterEvent("INVENTORY_SEARCH_UPDATE", queueSearch))
 
-	ns:RegisterEvent("PLAYER_MONEY", function()
+	track("PLAYER_MONEY", ns:RegisterEvent("PLAYER_MONEY", function()
 		local open = Bank:OpenView()
 		if open then
 			open:UpdateTabBar()
@@ -469,19 +558,74 @@ function Bank:OnEnable()
 				open:UpdateBankFooter()
 			end
 		end
-	end)
-	ns:RegisterEvent("ACCOUNT_MONEY", function()
+	end))
+	track("ACCOUNT_MONEY", ns:RegisterEvent("ACCOUNT_MONEY", function()
 		local open = Bank:OpenView()
 		if open and open.UpdateBankFooter then
 			open:UpdateBankFooter()
 		end
-	end)
-	ns:RegisterEvent("PLAYER_REGEN_ENABLED", function()
+	end))
+	track("PLAYER_REGEN_ENABLED", ns:RegisterEvent("PLAYER_REGEN_ENABLED", function()
 		for i = 1, #Bank.views do
 			local view = Bank.views[i]
 			if view.pendingDraw or view.bankMoneyPending then
 				view:RefreshIfOpen()
 			end
 		end
-	end)
+	end))
+
+	ns:RegisterCallback("Bank.Refresh", "RefreshIfOpen", self)
+end
+
+function Bank:UninstallHooks()
+	if self._hookHandles then
+		for i = 1, #self._hookHandles do
+			local handle = self._hookHandles[i]
+			ns:UnregisterEvent(handle.event, handle.callback)
+		end
+		self._hookHandles = nil
+	end
+	ns:UnregisterCallback("Bank.Refresh", self)
+end
+
+function Bank:OnDisable()
+	if not self._hooksInstalled then
+		return
+	end
+	self._hooksInstalled = false
+	self:UninstallHooks()
+	self:CloseAll()
+	BankSession:RestoreBlizzardBankFrame()
+	BankSession:HideBankPanel()
+	self:NotifyBackpackBankContext()
+end
+
+function Bank:OnEnable()
+	if not ns.db.bank.windowPos then
+		local old = ns.db.bank.position
+		if not old and ns.db.bank.positions then
+			old = ns.db.bank.positions[BANK_TYPE_CHARACTER] or ns.db.bank.positions[BANK_TYPE_ACCOUNT]
+		end
+		if old then
+			ns.db.bank.windowPos = old
+		end
+	end
+	ns.db.bank.position = nil
+	ns.db.bank.positions = nil
+
+	if GetCVarBool then
+		ns.db.bank.depositReagents = GetCVarBool("bankAutoDepositReagents") and true or false
+	end
+	self:ApplyDepositReagents()
+
+	self:EnsureViews()
+
+	if self._hooksInstalled then
+		return
+	end
+	if not self:IsRuntimeActive() then
+		return
+	end
+	self._hooksInstalled = true
+	self:InstallHooks()
 end

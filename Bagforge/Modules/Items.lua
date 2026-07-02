@@ -13,6 +13,7 @@ local C, F, L = ns.C, ns.F, ns.L
 
 local InCombatLockdown = InCombatLockdown
 local C_Container = C_Container
+local wipe = wipe
 
 local Items = ns:NewModule("Items")
 
@@ -32,6 +33,10 @@ end
 
 function Items:Scan()
 	self._scanDirty = false
+	local recent = ns.Recent
+	if recent and recent.Scan then
+		recent:Scan()
+	end
 	if ns.Search and ns.Search.InvalidateTooltips then
 		ns.Search.InvalidateTooltips()
 	end
@@ -83,7 +88,27 @@ function Items:Sort()
 	if recent and recent.ClearBackpack then
 		recent:ClearBackpack()
 	end
+	ns:BeginBagSort()
 	C_Container.SortBags()
+end
+
+local function MarkAllBackpackBagsDirty(dirtyBags)
+	for _, bag in ipairs(C.BACKPACK_BAGS) do
+		dirtyBags[bag] = true
+	end
+end
+
+local function FlushBackpackRefresh(dirtyBackpackBags)
+	if not Items:AnyWindowOpen() then
+		Items:MarkScanDirty()
+		wipe(dirtyBackpackBags)
+		return
+	end
+	if not next(dirtyBackpackBags) then
+		return
+	end
+	wipe(dirtyBackpackBags)
+	Items:Scan()
 end
 
 --- Re-render every open bag window after a display-affecting change. One shared
@@ -112,17 +137,32 @@ end
 -- Lifecycle
 -- ---------------------------------------------------------------------------
 function Items:OnEnable()
-	local refresh = F.DebounceNoArgs(0.05, function()
-		if not Items:AnyWindowOpen() then
-			Items:MarkScanDirty()
-			return
+	local dirtyBackpackBags = {}
+
+	ns:RegisterEvent("BAG_UPDATE", function(_, bagID)
+		if bagID and C.IS_BACKPACK_BAG[bagID] then
+			dirtyBackpackBags[bagID] = true
 		end
-		Items:Scan()
 	end)
 
+	local refresh = F.DebounceTrailingNoArgs(0.05, function()
+		if ns:IsBagSortActive() then
+			ns:ScheduleBagSortFlush("backpack", function()
+				FlushBackpackRefresh(dirtyBackpackBags)
+			end)
+			return
+		end
+		FlushBackpackRefresh(dirtyBackpackBags)
+	end)
+
+	local function queueFullBackpackRefresh()
+		MarkAllBackpackBagsDirty(dirtyBackpackBags)
+		refresh()
+	end
+
 	ns:RegisterEvent("BAG_UPDATE_DELAYED", refresh)
-	ns:RegisterEvent("PLAYER_LOGIN", refresh)
-	ns:RegisterEvent("BAG_NEW_ITEMS_UPDATED", refresh)
+	ns:RegisterEvent("PLAYER_LOGIN", queueFullBackpackRefresh)
+	ns:RegisterEvent("BAG_NEW_ITEMS_UPDATED", queueFullBackpackRefresh)
 
 	-- A search keystroke only desaturates non-matching items - membership, order
 	-- and sections are unchanged. So skip the full rescan: re-read isFiltered on
@@ -204,7 +244,8 @@ function Items:OnEnable()
 		local bank = ns:GetModule("Bank")
 		local needRescan = false
 		for itemID in pairs(pendingItemIDs) do
-			if scanner:RefreshItemID(itemID) then
+			local catChanged = scanner:RefreshItemID(itemID)
+			if catChanged then
 				needRescan = true
 			end
 			if bank and bank.RefreshItemID then

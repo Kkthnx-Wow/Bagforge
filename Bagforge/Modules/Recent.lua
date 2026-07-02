@@ -40,6 +40,7 @@ local seenGUIDs = {}
 local recentGUIDs = {} -- guid -> firstSeenTime
 local slotGUIDs = {} -- SlotKey -> guid
 local guidSlots = {} -- guid -> SlotKey
+local slotGUIDCache = {} -- SlotKey -> guid, filled by Scan() for scanner reuse
 local firstStart = true
 local currentSlots = {}
 
@@ -110,6 +111,7 @@ function Recent:Scan()
 	local now = GetTime()
 	ClearExpired(now)
 	wipe(currentSlots)
+	wipe(slotGUIDCache)
 
 	for _, bag in ipairs(C.BACKPACK_BAGS) do
 		local numSlots = C_Container.GetContainerNumSlots(bag) or 0
@@ -117,6 +119,7 @@ function Recent:Scan()
 			local guid = GetSlotGUID(bag, slot)
 			if GUIDAccessible(guid) then
 				local key = SlotKey(bag, slot)
+				slotGUIDCache[key] = guid
 				local wasSeen = seenGUIDs[guid]
 				currentSlots[key] = guid
 				seenGUIDs[guid] = true
@@ -160,6 +163,11 @@ function Recent:EndStartup()
 end
 
 function Recent:GetSlotGUID(bag, slot)
+	local key = SlotKey(bag, slot)
+	local cached = slotGUIDCache[key]
+	if cached ~= nil then
+		return cached
+	end
 	return GetSlotGUID(bag, slot)
 end
 
@@ -222,7 +230,12 @@ function Recent:ClearBackpack()
 end
 
 function Recent:OnEnable()
-	local debouncedScan = F.DebounceNoArgs(0.05, function()
+	local items = ns:GetModule("Items")
+	local debouncedScan = F.DebounceTrailingNoArgs(0.05, function()
+		-- When a bag window is open, Items:Scan() runs Recent:Scan() first.
+		if items and items.AnyWindowOpen and items:AnyWindowOpen() then
+			return
+		end
 		Recent:Scan()
 	end)
 

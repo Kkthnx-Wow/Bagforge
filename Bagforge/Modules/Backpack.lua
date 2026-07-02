@@ -58,6 +58,22 @@ local CURRENCY_TOKEN_GAP = 18
 local CURRENCY_BAR_PAD_LEFT = 0
 local CURRENCY_BAR_PAD_RIGHT = 0
 
+-- Character-create arrow atlases (same family KkthnxUI-style toolbar toggle).
+local ATLAS_TOOLBAR_EXPAND = "charactercreate-customize-nextbutton"
+local ATLAS_TOOLBAR_EXPAND_DOWN = "charactercreate-customize-nextbutton-down"
+local ATLAS_TOOLBAR_COLLAPSE = "charactercreate-customize-backbutton"
+local ATLAS_TOOLBAR_COLLAPSE_DOWN = "charactercreate-customize-backbutton-down"
+local TOOLBAR_TOGGLE_SIZE = 30
+
+local function SetToolbarToggleArt(btn, expanded)
+	local normal = expanded and ATLAS_TOOLBAR_COLLAPSE or ATLAS_TOOLBAR_EXPAND
+	local pushed = expanded and ATLAS_TOOLBAR_COLLAPSE_DOWN or ATLAS_TOOLBAR_EXPAND_DOWN
+	if btn.SetNormalAtlas then
+		btn:SetNormalAtlas(normal)
+		btn:SetPushedAtlas(pushed)
+	end
+end
+
 -- Tokens are pooled: each draw re-acquires the same frames, so never bump font
 -- size relative to GetFont() or it grows without bound across redraws.
 local currencyCountFont
@@ -85,6 +101,7 @@ ns:RegisterDefaults({
 		categoriesPerColumn = C.Layout.DEFAULT_CATEGORIES_PER_COLUMN,
 		flashFind = true,
 		showJunkPrice = true,
+		toolbarExpanded = false,
 	},
 })
 
@@ -293,10 +310,36 @@ function Backpack:BuildChrome()
 		organize:RegisterModeButton("delete", delete)
 	end
 
-	-- Reserve room on the search row for all six chrome buttons; the
-	-- delete-cheapest button may then hide itself (reclaiming its slot) when
-	-- the feature is toggled off.
-	self.search = self:CreateSearchBox(6)
+	self.toolbarExtraButtons = { assign, junk, delete, deleteCheapest }
+
+	local toggle = F.CreateIconButton(frame, TOOLBAR_TOGGLE_SIZE, TOOLBAR_TOGGLE_SIZE, ATLAS_TOOLBAR_EXPAND, ATLAS_TOOLBAR_EXPAND_DOWN)
+	F.SetIconButtonHighlightSize(toggle, btnW)
+	toggle:SetPoint("RIGHT", bagToggle, "LEFT", -btnGap, 0)
+	toggle:SetScript("OnEnter", function(btn)
+		GameTooltip:SetOwner(btn, "ANCHOR_TOP")
+		if Backpack.toolbarExpanded then
+			GameTooltip_SetTitle(GameTooltip, L["Collapse Toolbar"], HIGHLIGHT_FONT_COLOR)
+			GameTooltip_AddNormalLine(GameTooltip, L["Hide extra bag actions."])
+		else
+			GameTooltip_SetTitle(GameTooltip, L["Expand Toolbar"], HIGHLIGHT_FONT_COLOR)
+			GameTooltip_AddNormalLine(GameTooltip, L["Show assign, junk, delete, and more."])
+		end
+		GameTooltip:Show()
+	end)
+	toggle:SetScript("OnLeave", GameTooltip_Hide)
+	toggle:SetScript("OnClick", function()
+		local db = ns.db and ns.db.backpack
+		Backpack.toolbarExpanded = not Backpack.toolbarExpanded
+		if db then
+			db.toolbarExpanded = Backpack.toolbarExpanded
+		end
+		Backpack:UpdateToolbarChrome()
+	end)
+	self.toolbarToggleButton = toggle
+
+	-- Search width follows visible chrome buttons (collapse hides extras).
+	self.search = self:CreateSearchBox(3)
+	self:UpdateToolbarChrome()
 	self:UpdateDeleteCheapestButton()
 
 	local money = CreateFrame("Frame", "BagforgeMoneyFrame", frame, "SmallMoneyFrameTemplate")
@@ -339,17 +382,67 @@ function Backpack:BuildChrome()
 	self:BuildBagBar()
 end
 
+--- How many icon buttons sit on the search row (sort + bag + toggle + optional extras).
+function Backpack:GetToolbarButtonCount()
+	local count = 3
+	if self.toolbarExpanded then
+		count = count + 3
+		local cheapest = self.deleteCheapestButton
+		if cheapest and cheapest:IsShown() then
+			count = count + 1
+		end
+	end
+	return count
+end
+
+function Backpack:UpdateToolbarChrome()
+	local db = ns.db and ns.db.backpack
+	self.toolbarExpanded = db and db.toolbarExpanded == true
+
+	local _, _, _, _, btnGap = self:GetChromeInsets()
+	local expanded = self.toolbarExpanded
+	local extras = self.toolbarExtraButtons
+	if extras then
+		for i = 1, #extras do
+			local btn = extras[i]
+			if btn == self.deleteCheapestButton then
+				local enabled = ns.db and ns.db.deleteCheapest and ns.db.deleteCheapest.enable
+				btn:SetShown(expanded and enabled and true or false)
+			else
+				btn:SetShown(expanded and true or false)
+			end
+		end
+	end
+
+	local toggle = self.toolbarToggleButton
+	if toggle then
+		SetToolbarToggleArt(toggle, expanded)
+		toggle:ClearAllPoints()
+		if expanded then
+			local anchor = self.deleteCheapestButton
+			if not (anchor and anchor:IsShown()) then
+				anchor = self.deleteButton
+			end
+			toggle:SetPoint("RIGHT", anchor, "LEFT", -btnGap, 0)
+		else
+			toggle:SetPoint("RIGHT", self.bagToggleButton, "LEFT", -btnGap, 0)
+		end
+		toggle:Show()
+	end
+
+	if self.search then
+		local _, _, _, btnW = self:GetChromeInsets()
+		self:SetSearchReserve(self:GetToolbarButtonCount(), TOOLBAR_TOGGLE_SIZE - btnW)
+	end
+end
+
 -- Show/hide the delete-cheapest chrome button to match its setting, reclaiming
 -- the search-box width for the sixth button slot when it is turned off.
 function Backpack:UpdateDeleteCheapestButton()
-	local btn = self.deleteCheapestButton
-	if not btn then
+	if not self.deleteCheapestButton then
 		return
 	end
-	local db = ns.db and ns.db.deleteCheapest
-	local enabled = db and db.enable
-	btn:SetShown(enabled and true or false)
-	self:SetSearchReserve(enabled and 6 or 5)
+	self:UpdateToolbarChrome()
 end
 
 -- SmallMoneyFrame coin buttons already support pick-up; F.DecoratePickupMoneyFrame
@@ -561,6 +654,10 @@ function Backpack:Draw()
 			if bank and bank.IsBankOpen and bank:IsBankOpen() then
 				bank:RefreshItemContext()
 			end
+			local itemButton = ns:GetModule("ItemButton")
+			if itemButton and itemButton.RefreshCooldowns then
+				itemButton:RefreshCooldowns()
+			end
 		end,
 	})
 end
@@ -652,6 +749,10 @@ function Backpack:Close()
 			PlaySound(SOUNDKIT.IG_BACKPACK_CLOSE)
 		end
 	end
+	local itemButton = ns:GetModule("ItemButton")
+	if itemButton and itemButton.ClearBagHighlight then
+		itemButton:ClearBagHighlight()
+	end
 	if self.categoryContainers then
 		for _, container in pairs(self.categoryContainers) do
 			container:Reset()
@@ -698,9 +799,13 @@ function Backpack:SetColumns(columns)
 	return columns
 end
 
-function Backpack:OnSettingChanged()
+function Backpack:OnSettingChanged(key)
 	if self.frame then
 		self:ApplyBagBarState()
+	end
+	if key == "showJunkPrice" then
+		ns:RefreshBags(false)
+	elseif self.frame then
 		self:Draw()
 	end
 end

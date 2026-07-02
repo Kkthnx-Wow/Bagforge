@@ -180,6 +180,10 @@ local function BagSlot_OnEnter(button)
 	GameTooltip:Show()
 
 	if button.bagID then
+		local backpack = ns:GetModule("Backpack")
+		if not (backpack and backpack.frame and backpack.frame:IsShown()) then
+			return
+		end
 		local ItemButton = ns:GetModule("ItemButton")
 		if ItemButton and ItemButton.SetBagHighlight then
 			ItemButton:SetBagHighlight(button.bagID, true)
@@ -191,6 +195,10 @@ local function BagSlot_OnLeave(button)
 	GameTooltip_Hide()
 
 	if button.bagID then
+		local backpack = ns:GetModule("Backpack")
+		if not (backpack and backpack.frame and backpack.frame:IsShown()) then
+			return
+		end
 		local ItemButton = ns:GetModule("ItemButton")
 		if ItemButton and ItemButton.SetBagHighlight then
 			ItemButton:SetBagHighlight(button.bagID, false)

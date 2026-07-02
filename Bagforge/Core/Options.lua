@@ -22,7 +22,11 @@ local format = string.format
 -- Live apply
 -- ---------------------------------------------------------------------------
 local function ApplyModuleSetting(module, key, value)
-	if module.OnSettingChanged then
+	-- Bank uses `active` / `warband` as per-view toggles, not module lifecycle.
+	local isMasterEnable = key == "enable" or (key == "active" and module.dbKey ~= "bank")
+	if isMasterEnable then
+		ns:ApplyModuleEnable(module, value and true or false)
+	elseif module.OnSettingChanged then
 		module:OnSettingChanged(key, value)
 	end
 	if module.dbKey then

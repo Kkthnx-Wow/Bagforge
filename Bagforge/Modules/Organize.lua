@@ -898,17 +898,7 @@ end
 
 --- Lazily attach the "armed" glow (Blizzard's bags-newitem flash) to a toggle.
 local function EnsureModeGlow(button)
-	if button.bfModeGlow then
-		return button.bfModeGlow
-	end
-	local glow = button:CreateTexture(nil, "OVERLAY")
-	glow:SetAtlas("bags-newitem")
-	glow:SetBlendMode("ADD")
-	glow:SetPoint("TOPLEFT", button, "TOPLEFT", -2, 2)
-	glow:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", 2, -2)
-	glow:Hide()
-	button.bfModeGlow = glow
-	return glow
+	return F.EnsureIconGlow(button)
 end
 
 --- Switch to `mode` (or nil to disarm). The armed toggle gets the bags-newitem
@@ -1021,7 +1011,7 @@ function Organize:SetJunk(itemID, junked)
 	end
 	junk[itemID] = junked or nil
 	F.Print(format(junked and L["%s is now marked as junk."] or L["%s is no longer junk."], ItemLabel(itemID)))
-	ns:RefreshBags(true)
+	ns:RefreshBags(false)
 	return true
 end
 
@@ -1043,7 +1033,7 @@ function Organize:ClearJunk()
 	end
 	wipe(junk)
 	F.Print(L["Custom junk list cleared."])
-	ns:RefreshBags(true)
+	ns:RefreshBags(false)
 end
 
 -- ---------------------------------------------------------------------------

@@ -402,6 +402,11 @@ local function SectionSignature(section, columns, opts, showHeader)
 	h = FoldHash(h, hideSearch and 1 or 0)
 	local showCounts = ns.db and ns.db.organize and ns.db.organize.showCategoryCounts
 	h = FoldHash(h, showCounts == false and 0 or 1)
+	local showJunkPrice = ns.db and ns.db.backpack and ns.db.backpack.showJunkPrice
+	h = FoldHash(h, showJunkPrice == false and 0 or 1)
+	if section and section.name == L["Junk"] then
+		h = SafeFold(h, section.junkValue)
+	end
 	local items = section and section.items
 	if items then
 		for i = 1, #items do
@@ -457,19 +462,9 @@ local function BuildHeaderText(section, name)
 		end
 	end
 	local showJunk = not ns.db or not ns.db.backpack or ns.db.backpack.showJunkPrice
-	if showJunk and name == L["Junk"] and section and section.items then
-		local totalJunkValue = 0
-		for i = 1, #section.items do
-			local entry = section.items[i]
-			local sellPrice = entry.sellPrice
-			if sellPrice and F.NotSecret(sellPrice) and sellPrice > 0 then
-				local count = entry.count or 1
-				if F.NotSecret(count) then
-					totalJunkValue = totalJunkValue + (sellPrice * count)
-				end
-			end
-		end
-		if totalJunkValue > 0 then
+	if showJunk and name == L["Junk"] and section then
+		local totalJunkValue = section.junkValue
+		if totalJunkValue and totalJunkValue > 0 then
 			text = text .. " - " .. F.FormatMoney(totalJunkValue)
 		end
 	end

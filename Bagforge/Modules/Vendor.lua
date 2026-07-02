@@ -262,7 +262,15 @@ end
 function Vendor:OnEnable()
 	-- Registered unconditionally so the individual toggles (and the master
 	-- switch) apply live; the handler re-reads the DB on every merchant visit.
-	self:RegisterEvent("MERCHANT_SHOW", self.OnMerchantShow)
+	self.merchantShowHandler = self:RegisterEvent("MERCHANT_SHOW", self.OnMerchantShow)
+end
+
+function Vendor:OnDisable()
+	StopSelling()
+	if self.merchantShowHandler then
+		ns:UnregisterEvent("MERCHANT_SHOW", self.merchantShowHandler)
+		self.merchantShowHandler = nil
+	end
 end
 
 function Vendor:OnSettingChanged(key)

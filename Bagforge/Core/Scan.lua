@@ -58,7 +58,7 @@ local function GetBasics(itemID)
 		return maxStack, nameCache[itemID], expacCache[itemID]
 	end
 	local name, _, _, _, _, _, _, stack, _, _, _, _, _, _, expacID = GetItemInfo(itemID)
-	if stack then
+	if stack and F.NotSecret(stack) then
 		maxStackCache[itemID] = stack
 	end
 	if name then
@@ -110,7 +110,7 @@ end
 --- should never merge (unique gear, secret values, uncached max stack).
 local function MergeKey(entry)
 	local maxStack = entry.maxStack
-	if not (maxStack and maxStack > 1) then
+	if not (maxStack and F.NotSecret(maxStack) and maxStack > 1) then
 		return nil
 	end
 	local link = entry.hyperlink
@@ -148,6 +148,10 @@ function Scan.GetSellPrice(itemID, hyperlink)
 end
 
 function Scan.RefreshUnusableAll()
+	local itemInfo = ns:GetModule("ItemInfo")
+	if itemInfo and itemInfo.InvalidateUnusableCaches then
+		itemInfo:InvalidateUnusableCaches()
+	end
 	local items = ns:GetModule("Items")
 	if items and items.scanner then
 		items.scanner:RefreshUnusable()
@@ -441,9 +445,15 @@ function Scan.RegisterWithin(key, comparator)
 		if ok and type(res) == "boolean" then
 			return res
 		end
+		-- Secret compare/arithmetic in plugin code errors here; fall back safely.
 		return CompareItemID(a, b)
 	end
 	return true
+end
+
+--- For plugin sort comparators: use instead of raw numeric compare on scan fields.
+function Scan.SafeSortNumber(value, fallback)
+	return SafeSortNumber(value, fallback)
 end
 
 function Scan.HasBuiltinWithin(key)
@@ -530,6 +540,7 @@ function meta:_AcquireSection()
 		self._sectionPool[self._sectionCount] = section
 	end
 	wipe(section.items)
+	section.junkValue = nil
 	return section
 end
 
@@ -543,6 +554,7 @@ function meta:_BuildSections()
 
 	local lastCategory
 	local currentSection
+	local junkCategory = L["Junk"]
 	for i = 1, #self.slots do
 		local entry = self.slots[i]
 		if entry.category ~= lastCategory then
@@ -554,6 +566,15 @@ function meta:_BuildSections()
 			lastCategory = entry.category
 		end
 		currentSection.items[#currentSection.items + 1] = entry
+		if entry.category == junkCategory then
+			local sellPrice = entry.sellPrice
+			if sellPrice and F.NotSecret(sellPrice) and sellPrice > 0 then
+				local count = entry.count or 1
+				if F.NotSecret(count) then
+					currentSection.junkValue = (currentSection.junkValue or 0) + (sellPrice * count)
+				end
+			end
+		end
 	end
 end
 
@@ -586,7 +607,7 @@ function meta:_Build(bags)
 				-- Flag items whose full data (ilvl, bind, req level) isn't cached
 				-- yet so Run() can await them precisely (the ContinuableContainer
 				-- it stages does the actual loading) instead of polling.
-				if IsItemDataCachedByID and not IsItemDataCachedByID(info.itemID) then
+				if IsItemDataCachedByID and F.NotSecret(info.itemID) and not IsItemDataCachedByID(info.itemID) then
 					self._incomplete = true
 				end
 				local questInfo = C_Container.GetContainerItemQuestInfo(bag, slot)
@@ -798,6 +819,10 @@ function meta:Run(bags, onComplete)
 		if self._scanGen ~= gen then
 			return
 		end
+		local itemInfo = ns:GetModule("ItemInfo")
+		if itemInfo and itemInfo.InvalidateUnusableCaches then
+			itemInfo:InvalidateUnusableCaches()
+		end
 		self:_Build(bags)
 		if onComplete then
 			onComplete(self)
@@ -852,13 +877,42 @@ function meta:RefreshQuestState()
 	end
 end
 
+--- Re-sum vendor value for the Junk section after async sell prices arrive.
+function meta:RecomputeJunkSectionValue()
+	local junkCategory = L["Junk"]
+	for i = 1, #self.sections do
+		local section = self.sections[i]
+		if section.name == junkCategory then
+			local total = 0
+			local items = section.items
+			for j = 1, #items do
+				local entry = items[j]
+				local sellPrice = entry.sellPrice
+				if sellPrice and F.NotSecret(sellPrice) and sellPrice > 0 then
+					local count = entry.count or 1
+					if F.NotSecret(count) then
+						total = total + (sellPrice * count)
+					end
+				end
+			end
+			local newValue = total > 0 and total or nil
+			if section.junkValue ~= newValue then
+				section.junkValue = newValue
+				return true
+			end
+			return false
+		end
+	end
+	return false
+end
+
 --- Refresh cached item fields after GET_ITEM_INFO_RECEIVED without a full scan.
---- Returns true when category membership may have changed (caller should rescan).
+--- Returns categoryChanged, junkValueChanged (caller should rescan / repaint).
 --- O(k) where k = number of stacks of this itemID (via entriesByItemID), not O(n)
 --- over all slots.
 function meta:RefreshItemID(itemID)
 	if not (itemID and F.NotSecret(itemID)) then
-		return false
+		return false, false
 	end
 	maxStackCache[itemID] = nil
 	nameCache[itemID] = nil
@@ -873,6 +927,8 @@ function meta:RefreshItemID(itemID)
 	local categories = ns:GetModule("Categories")
 	local itemInfo = ns:GetModule("ItemInfo")
 	local categoryChanged = false
+	local junkDirty = false
+	local junkCategory = L["Junk"]
 	local maxStack, name, expacID = GetBasics(itemID)
 
 	for i = 1, #entries do
@@ -891,7 +947,11 @@ function meta:RefreshItemID(itemID)
 			entry.ilvl = itemInfo:GetItemLevel(entry)
 			CacheUnusable(entry, itemInfo)
 		end
+		local oldPrice = entry.sellPrice
 		entry.sellPrice = GetSellPrice(itemID, entry.hyperlink)
+		if entry.category == junkCategory and oldPrice ~= entry.sellPrice then
+			junkDirty = true
+		end
 		if categories then
 			local cat = categories:GetCategory(entry)
 			if cat ~= entry.category then
@@ -901,7 +961,8 @@ function meta:RefreshItemID(itemID)
 			end
 		end
 	end
-	return categoryChanged
+	local junkChanged = junkDirty and self:RecomputeJunkSectionValue() or false
+	return categoryChanged, junkChanged
 end
 
 --- Refresh search-filter state on the existing entries without reclassifying.

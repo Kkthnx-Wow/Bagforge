@@ -251,6 +251,8 @@ function F.Debounce(delay, func)
 end
 
 --- Debounce with no per-call args table (for zero-argument refresh handlers).
+--- Leading-edge: first call in a burst schedules one run; calls during the window
+--- are dropped (not reset). Prefer DebounceTrailingNoArgs for bag refresh storms.
 function F.DebounceNoArgs(delay, func)
 	local scheduled = false
 	return function()
@@ -263,6 +265,44 @@ function F.DebounceNoArgs(delay, func)
 			func()
 		end)
 	end
+end
+
+--- Trailing debounce (BetterBags-style): each call resets the timer so `func`
+--- runs once after `delay` seconds of quiet. Use for BAG_UPDATE / sort flush.
+function F.DebounceTrailingNoArgs(delay, func)
+	local timer
+	return function()
+		if timer and timer.Cancel then
+			timer:Cancel()
+		end
+		timer = C_Timer.NewTimer(delay, function()
+			timer = nil
+			func()
+		end)
+	end
+end
+
+local bucketTimers = {}
+
+--- Bucket rapid-fire events (BetterBags-style): each fire resets the timer;
+--- `handler` runs once after `delay` seconds of quiet. Registers on the
+--- shared ns event frame.
+function F.BucketEvent(event, delay, handler)
+	if not (event and handler) then
+		return
+	end
+	delay = delay or 0.2
+	ns:RegisterEvent(event, function(...)
+		local args = { ... }
+		local timer = bucketTimers[event]
+		if timer and timer.Cancel then
+			timer:Cancel()
+		end
+		bucketTimers[event] = C_Timer.NewTimer(delay, function()
+			bucketTimers[event] = nil
+			handler(unpack(args))
+		end)
+	end)
 end
 
 -- ---------------------------------------------------------------------------
@@ -545,6 +585,245 @@ function F.CreatePool(creator, onRemoved, onAcquired)
 end
 
 -- ---------------------------------------------------------------------------
+-- Blizzard secure-action proxies (bank tab purchase, money transfer, …)
+--   Protected APIs must run from Blizzard's untainted OnClick path. Addon
+--   buttons use InsecureActionButtonTemplate + clickbutton forwarding.
+-- ---------------------------------------------------------------------------
+local InCombatLockdown = _G["InCombatLockdown"]
+
+function F.GetBlizzardBankPanel()
+	local bankFrame = _G.BankFrame
+	return bankFrame and bankFrame.BankPanel
+end
+
+function F.GetBlizzardBankPurchaseButton()
+	local panel = F.GetBlizzardBankPanel()
+	local prompt = panel and panel.PurchasePrompt
+	local costFrame = prompt and prompt.TabCostFrame
+	return costFrame and costFrame.PurchaseButton
+end
+
+function F.GetBlizzardBankMoneyButtons()
+	local panel = F.GetBlizzardBankPanel()
+	local moneyFrame = panel and panel.MoneyFrame
+	if not moneyFrame then
+		return nil, nil
+	end
+	return moneyFrame.WithdrawButton, moneyFrame.DepositButton
+end
+
+--- Keep Blizzard withdraw/deposit handlers alive for secure click proxies.
+--- Purchase-prompt mode hides MoneyFrame; without this, clickbutton targets stay
+--- hidden/disabled and warband gold transfer never opens the popup.
+function F.PrepareBlizzardBankMoneyButtons(bankType)
+	local panel = F.GetBlizzardBankPanel()
+	if not panel or not bankType then
+		return nil, nil
+	end
+	if panel.GetActiveBankType and panel:GetActiveBankType() ~= bankType and panel.SetBankType then
+		panel:SetBankType(bankType)
+	end
+	local moneyFrame = panel.MoneyFrame
+	if not moneyFrame then
+		return nil, nil
+	end
+	moneyFrame:Show()
+	if moneyFrame.RefreshContents then
+		moneyFrame:RefreshContents()
+	elseif moneyFrame.Refresh then
+		moneyFrame:Refresh()
+	end
+	local withdraw = moneyFrame.WithdrawButton
+	local deposit = moneyFrame.DepositButton
+	if withdraw and withdraw.Refresh then
+		withdraw:Refresh()
+	end
+	if deposit and deposit.Refresh then
+		deposit:Refresh()
+	end
+	-- Bagforge paints its own money display; hide Blizzard chrome only.
+	if moneyFrame.MoneyDisplay then
+		moneyFrame.MoneyDisplay:Hide()
+	end
+	if withdraw then
+		withdraw:EnableMouse(false)
+	end
+	if deposit then
+		deposit:EnableMouse(false)
+	end
+	return withdraw, deposit
+end
+
+--- Point `button` (InsecureActionButtonTemplate) at Blizzard's secure button.
+--- `mouseButton` is "LeftButton" or "RightButton" (maps to secure suffix 1/2).
+function F.ConfigureSecureClickProxy(button, target, mouseButton)
+	if not button or not target or (InCombatLockdown and InCombatLockdown()) then
+		return false
+	end
+	-- Mouse-up clicks are ignored when the global key-down CVar is on unless we
+	-- override per-button (same issue as action bars with ActionButtonUseKeyDown).
+	button:SetAttribute("useOnKeyDown", false)
+	button:SetAttribute("type", nil)
+	button:SetAttribute("clickbutton", nil)
+	if mouseButton == "RightButton" then
+		button:SetAttribute("type1", nil)
+		button:SetAttribute("clickbutton1", nil)
+		button:SetAttribute("type2", "click")
+		button:SetAttribute("clickbutton2", target)
+	elseif mouseButton == "LeftButton" then
+		button:SetAttribute("type2", nil)
+		button:SetAttribute("clickbutton2", nil)
+		button:SetAttribute("type1", "click")
+		button:SetAttribute("clickbutton1", target)
+	else
+		button:SetAttribute("type1", "click")
+		button:SetAttribute("clickbutton1", target)
+		button:SetAttribute("type2", "click")
+		button:SetAttribute("clickbutton2", target)
+	end
+	button:EnableMouse(true)
+	return true
+end
+
+function F.BankMoneyDebugEnabled()
+	return ns.global and ns.global.bankMoneyDebug and true or false
+end
+
+function F.SetBankMoneyDebug(enabled)
+	if ns.global then
+		ns.global.bankMoneyDebug = enabled and true or false
+	end
+end
+
+local function DbgYesNo(v)
+	return v and "yes" or "no"
+end
+
+local function DbgName(frame)
+	return frame and frame:GetName() or "anon"
+end
+
+--- Verbose warband/character bank gold transfer diagnostics (`/bf debugmoney`).
+function F.DebugBankMoney(view, tag, extra)
+	if not F.BankMoneyDebugEnabled() then
+		return
+	end
+
+	local format = string.format
+	local prefix = format("|cffaaaaaa[BankMoney:%s]|r", tag or "?")
+	local C_Bank = _G.C_Bank
+	local bankType = view and view.bankType
+	local panel = F.GetBlizzardBankPanel()
+	local moneyFrame = panel and panel.MoneyFrame
+	local withdraw = moneyFrame and moneyFrame.WithdrawButton
+	local deposit = moneyFrame and moneyFrame.DepositButton
+	local proxyW = view and view.bankMoneyWithdrawClick
+	local proxyD = view and view.bankMoneyDepositClick
+
+	F.Print(prefix, "view", view and view.enabledKey or "nil", "open", DbgYesNo(view and view.open))
+	F.Print(prefix, "bankType", bankType, "transfer", DbgYesNo(view and view.SupportsMoneyTransfer and view:SupportsMoneyTransfer()))
+	if bankType and C_Bank then
+		F.Print(
+			prefix,
+			"canUse",
+			DbgYesNo(view and view.CanUse and view:CanUse()),
+			"canWithdraw",
+			DbgYesNo(C_Bank.CanWithdrawMoney and C_Bank.CanWithdrawMoney(bankType)),
+			"canDeposit",
+			DbgYesNo(C_Bank.CanDepositMoney and C_Bank.CanDepositMoney(bankType))
+		)
+		local locked = C_Bank.FetchBankLockedReason and C_Bank.FetchBankLockedReason(bankType)
+		if locked ~= nil then
+			F.Print(prefix, "lockedReason", locked)
+		end
+	end
+	F.Print(prefix, "combat", DbgYesNo(InCombatLockdown and InCombatLockdown()))
+
+	local bfMoney = view and view.bankMoneyFrame
+	if bfMoney then
+		F.Print(prefix, "bfMoney", DbgYesNo(bfMoney:IsShown()), DbgYesNo(bfMoney:IsVisible()), "enabled", DbgYesNo(bfMoney:IsMouseEnabled()))
+	end
+	if proxyW then
+		F.Print(
+			prefix,
+			"proxyW",
+			DbgYesNo(proxyW:IsShown()),
+			DbgYesNo(proxyW:IsEnabled()),
+			"mouse",
+			DbgYesNo(proxyW:IsMouseEnabled()),
+			"target",
+			DbgName(extra and extra.withdrawTarget or withdraw),
+			"wired",
+			DbgYesNo(extra and extra.withdrawProxy)
+		)
+	end
+	if proxyD then
+		F.Print(
+			prefix,
+			"proxyD",
+			DbgYesNo(proxyD:IsShown()),
+			DbgYesNo(proxyD:IsEnabled()),
+			"mouse",
+			DbgYesNo(proxyD:IsMouseEnabled()),
+			"target",
+			DbgName(extra and extra.depositTarget or deposit),
+			"wired",
+			DbgYesNo(extra and extra.depositProxy)
+		)
+	end
+
+	if panel then
+		local activeType = panel.GetActiveBankType and panel:GetActiveBankType()
+		F.Print(prefix, "panel", DbgYesNo(panel:IsShown()), "activeType", activeType)
+		local purchasePrompt = panel.PurchasePrompt
+		if purchasePrompt then
+			F.Print(prefix, "purchasePrompt", DbgYesNo(purchasePrompt:IsShown()))
+		end
+	end
+	if moneyFrame then
+		F.Print(prefix, "blizzMoney", DbgYesNo(moneyFrame:IsShown()), DbgYesNo(moneyFrame:IsVisible()))
+	end
+	if withdraw then
+		local forbidden = withdraw.IsForbidden and withdraw:IsForbidden()
+		F.Print(prefix, "blizzW", DbgYesNo(withdraw:IsShown()), DbgYesNo(withdraw:IsEnabled()), "forbidden", DbgYesNo(forbidden))
+	end
+	if deposit then
+		local forbidden = deposit.IsForbidden and deposit:IsForbidden()
+		F.Print(prefix, "blizzD", DbgYesNo(deposit:IsShown()), DbgYesNo(deposit:IsEnabled()), "forbidden", DbgYesNo(forbidden))
+	end
+
+	local GetCVarBool = _G.GetCVarBool
+	if GetCVarBool then
+		F.Print(prefix, "cvarKeyDown", DbgYesNo(GetCVarBool("ActionButtonUseKeyDown")))
+	end
+
+	local StaticPopup_Visible = _G.StaticPopup_Visible
+	if StaticPopup_Visible then
+		F.Print(
+			prefix,
+			"popupW",
+			DbgYesNo(StaticPopup_Visible("BANK_MONEY_WITHDRAW")),
+			"popupD",
+			DbgYesNo(StaticPopup_Visible("BANK_MONEY_DEPOSIT"))
+		)
+	end
+end
+
+function F.DebugBankMoneyDumpAll()
+	local bank = ns:GetModule("Bank")
+	if not bank or not bank.views then
+		F.DebugBankMoney(nil, "dump")
+		return
+	end
+	for i = 1, #bank.views do
+		local view = bank.views[i]
+		if view then
+			F.DebugBankMoney(view, "dump-" .. (view.enabledKey or i))
+		end
+	end
+end
+
+-- ---------------------------------------------------------------------------
 -- Secret values (Patch 12.0 / Midnight)
 --   A handful of APIs (money in combat, unit identity in instances) return
 --   "secret" values that tainted code may not compare or do arithmetic on.
@@ -638,6 +917,35 @@ function F.CreateIconButton(parent, width, height, normal, pushed)
 		hl:SetPoint("CENTER", btn, "CENTER", 0, 0)
 	end
 	return btn
+end
+
+--- Shrink the stock ButtonHilight-Square (e.g. oversized chrome icons).
+function F.SetIconButtonHighlightSize(button, size)
+	local hl = button:GetHighlightTexture()
+	if hl then
+		hl:ClearAllPoints()
+		hl:SetSize(size, size)
+		hl:SetPoint("CENTER", button, "CENTER", 0, 0)
+	end
+end
+
+--- Additive bags-newitem glow shared by armed toolbar modes and chrome hovers.
+--- `inset` pulls the glow inward (px); default 0 matches the armed-mode buttons.
+function F.EnsureIconGlow(button, inset)
+	if button.bfIconGlow then
+		return button.bfIconGlow
+	end
+	inset = inset or 0
+	local x = -2 + inset
+	local y = 2 - inset
+	local glow = button:CreateTexture(nil, "OVERLAY")
+	glow:SetAtlas("bags-newitem")
+	glow:SetBlendMode("ADD")
+	glow:SetPoint("TOPLEFT", button, "TOPLEFT", x, y)
+	glow:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -x, -y)
+	glow:Hide()
+	button.bfIconGlow = glow
+	return glow
 end
 
 -- Anchor a small overlay (font string / texture) to a slot corner. `corner` is

@@ -39,9 +39,11 @@ local floor = math.floor
 local BagSlotFlags = Enum.BagSlotFlags
 
 local STEP_DELAY = 0.15
+local MAX_DEPOSIT_RETRIES = 20
 local IS_BACKPACK_BAG = C.IS_BACKPACK_BAG
 
 local transferQueue = {}
+local depositRetryCounts = {}
 local allocatedSlots = {}
 local queueEventFrame
 local depositDraining = false
@@ -120,6 +122,7 @@ end
 local function ClearDepositQueue()
 	wipe(transferQueue)
 	wipe(allocatedSlots)
+	wipe(depositRetryCounts)
 	depositDraining = false
 	if queueEventFrame then
 		queueEventFrame:UnregisterEvent("BAG_UPDATE")
@@ -203,6 +206,13 @@ local function ProcessQueuedDeposit(srcBag, srcSlot)
 	end
 	local targetSlot = FindTargetSlot(targetBag, info.itemID)
 	if not targetSlot then
+		local retryKey = SlotKey(srcBag, srcSlot)
+		local tries = (depositRetryCounts[retryKey] or 0) + 1
+		depositRetryCounts[retryKey] = tries
+		if tries >= MAX_DEPOSIT_RETRIES then
+			depositRetryCounts[retryKey] = nil
+			return nil
+		end
 		local now = GetTime()
 		if now - lastNoBankSlotErrorAt > 2 and UIErrorsFrame then
 			lastNoBankSlotErrorAt = now
@@ -215,6 +225,7 @@ local function ProcessQueuedDeposit(srcBag, srcSlot)
 	C_Container.PickupContainerItem(srcBag, srcSlot)
 	C_Container.PickupContainerItem(targetBag, targetSlot)
 	ClearCursor()
+	depositRetryCounts[SlotKey(srcBag, srcSlot)] = nil
 	return true
 end
 

@@ -18,9 +18,6 @@ local GameTooltip = GameTooltip
 local GameTooltip_Hide = _G["GameTooltip_Hide"]
 local BANKSLOTPURCHASE = _G["BANKSLOTPURCHASE"]
 local QUESTION_MARK_ICON = _G["QUESTION_MARK_ICON"] or "Interface\\Icons\\INV_Misc_QuestionMark"
-local StaticPopup_Show = _G["StaticPopup_Show"]
-local StaticPopup_Hide = _G["StaticPopup_Hide"]
-local StaticPopup_Visible = _G["StaticPopup_Visible"]
 local SetItemButtonTexture = _G["SetItemButtonTexture"]
 local GetMoneyString = _G["GetMoneyString"]
 local GetMoney = _G["GetMoney"]
@@ -42,7 +39,10 @@ local TAB_PURCHASE_GAP = 8
 local TAB_SELECTED_COLOR = { 0.35, 0.75, 1 }
 
 local BANK_TYPE_ACCOUNT = Enum.BankType and Enum.BankType.Account
+local BANK_TYPE_CHARACTER = Enum.BankType and Enum.BankType.Character
 local MONEY_COIN_BUTTONS = { "GoldButton", "SilverButton", "CopperButton" }
+local BANK_TAB_TOOLTIP_CLICK_INSTRUCTION = _G["BANK_TAB_TOOLTIP_CLICK_INSTRUCTION"]
+local GREEN_FONT_COLOR = _G["GREEN_FONT_COLOR"]
 
 local BankView = {}
 ns.BankView = BankView
@@ -90,6 +90,14 @@ local function TabSlot_OnEnter(button)
 		GameTooltip:AddLine(L["Left-click to choose deposit tab"], 0.7, 0.7, 0.7)
 	end
 
+	if button.tabName and BANK_TAB_TOOLTIP_CLICK_INSTRUCTION then
+		local r, g, b = 0, 1, 0
+		if GREEN_FONT_COLOR then
+			r, g, b = GREEN_FONT_COLOR.r, GREEN_FONT_COLOR.g, GREEN_FONT_COLOR.b
+		end
+		GameTooltip:AddLine(BANK_TAB_TOOLTIP_CLICK_INSTRUCTION, r, g, b)
+	end
+
 	GameTooltip:Show()
 
 	if button.bagID then
@@ -103,17 +111,18 @@ end
 local function TabSlot_OnClick(button, mouseButton)
 	if mouseButton == "LeftButton" then
 		local view = button.view
-		if view and button.bagID and view.SetDepositTargetBag then
+		if view and view.tabSettingsMenu and view.tabSettingsMenu:IsShown() then
+			view.tabSettingsMenu:Hide()
+		end
+		if view and button.bagID and button.tabPurchased and view.SetDepositTargetBag then
 			view:SetDepositTargetBag(button.bagID)
 		end
 		return
 	end
 	if mouseButton == "RightButton" then
-		local BankFrame = _G["BankFrame"]
-		if BankFrame and BankFrame.BankTabSettingsMenu and BankFrame.BankTabSettingsMenu.OnOpenTabSettingsRequested then
-			if button.bagID then
-				BankFrame.BankTabSettingsMenu:OnOpenTabSettingsRequested(button.bagID)
-			end
+		local view = button.view
+		if view and button.bagID and button.tabName and view.OpenTabSettings then
+			view:OpenTabSettings(button, button.bagID)
 		end
 	end
 end
@@ -193,7 +202,65 @@ local function DisableMoneyPickup(money)
 	end
 end
 
-local function DecorateTransferMoneyFrame(view, money, click)
+local function WireMoneyTransferDebug(view, button, action)
+	if not button or button.bfMoneyDebugHooked then
+		return
+	end
+	button.bfMoneyDebugHooked = true
+	button:HookScript("PreClick", function()
+		F.DebugBankMoney(view, "pre-" .. action)
+	end)
+	button:HookScript("PostClick", function()
+		F.DebugBankMoney(view, "post-" .. action)
+	end)
+end
+
+local function ShowMoneyTransferTooltip(view, owner)
+	local money = view.bankMoneyFrame
+	local highlight = money and money.bfHighlight
+	if highlight then
+		highlight:Show()
+	end
+	GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
+	local title = view:IsWarband() and L["Warband Bank Gold"] or L["Money"]
+	GameTooltip_SetTitle(GameTooltip, title, HIGHLIGHT_FONT_COLOR)
+	if view.bankMoneyLockTip then
+		GameTooltip_AddErrorLine(GameTooltip, view.bankMoneyLockTip)
+	elseif view:IsWarband() then
+		F.AddClickHintLine(GameTooltip, "left", "%s to withdraw warband gold.")
+		F.AddClickHintLine(GameTooltip, "right", "%s to deposit warband gold.")
+	else
+		F.AddClickHintLine(GameTooltip, "left", "%s to withdraw gold.")
+		F.AddClickHintLine(GameTooltip, "right", "%s to deposit gold.")
+	end
+	GameTooltip:Show()
+end
+
+local function HideMoneyTransferTooltip(view)
+	local money = view.bankMoneyFrame
+	if money and money.bfHighlight then
+		money.bfHighlight:Hide()
+	end
+	GameTooltip_Hide()
+end
+
+local function InstallMoneyTransferTooltips(view, clickFrame)
+	if not clickFrame or clickFrame.bfTransferTooltip then
+		return
+	end
+	clickFrame.bfTransferTooltip = true
+	clickFrame:HookScript("OnEnter", function()
+		ShowMoneyTransferTooltip(view, clickFrame)
+	end)
+	clickFrame:HookScript("OnLeave", function()
+		HideMoneyTransferTooltip(view)
+	end)
+end
+
+local function EnsureMoneyTransferHighlight(money)
+	if money.bfHighlight then
+		return money.bfHighlight
+	end
 	local highlight = money:CreateTexture(nil, "OVERLAY")
 	highlight:SetAtlas("CreditsScreen-Highlight")
 	highlight:SetBlendMode("ADD")
@@ -202,27 +269,7 @@ local function DecorateTransferMoneyFrame(view, money, click)
 	highlight:SetPoint("BOTTOMRIGHT", money.CopperButton or money, "BOTTOMRIGHT", 2, -2)
 	highlight:Hide()
 	money.bfHighlight = highlight
-
-	click:SetScript("OnEnter", function()
-		highlight:Show()
-		GameTooltip:SetOwner(click, "ANCHOR_RIGHT")
-		local title = view:IsWarband() and L["Warband Bank Gold"] or L["Money"]
-		GameTooltip_SetTitle(GameTooltip, title, HIGHLIGHT_FONT_COLOR)
-		if view.bankMoneyLockTip then
-			GameTooltip_AddErrorLine(GameTooltip, view.bankMoneyLockTip)
-		elseif view:IsWarband() then
-			F.AddClickHintLine(GameTooltip, "left", "%s to withdraw warband gold.")
-			F.AddClickHintLine(GameTooltip, "right", "%s to deposit warband gold.")
-		else
-			F.AddClickHintLine(GameTooltip, "left", "%s to withdraw gold.")
-			F.AddClickHintLine(GameTooltip, "right", "%s to deposit gold.")
-		end
-		GameTooltip:Show()
-	end)
-	click:SetScript("OnLeave", function()
-		highlight:Hide()
-		GameTooltip_Hide()
-	end)
+	return highlight
 end
 
 function View:BuildBankFooter()
@@ -253,15 +300,29 @@ function View:BuildBankFooter()
 
 	if self:SupportsMoneyTransfer() then
 		DisableMoneyPickup(money)
-		local moneyClick = CreateFrame("Button", nil, money)
-		moneyClick:SetAllPoints(money)
-		moneyClick:SetFrameLevel(money:GetFrameLevel() + 10)
-		moneyClick:RegisterForClicks("LeftButtonUp", "RightButtonUp")
-		moneyClick:SetScript("OnClick", function(_, mouseButton)
-			self:OnBankMoneyClick(mouseButton)
-		end)
-		DecorateTransferMoneyFrame(self, money, moneyClick)
-		self.bankMoneyClick = moneyClick
+		EnsureMoneyTransferHighlight(money)
+
+		-- Deposit below withdraw: both cover the money row, but only withdraw
+		-- registers left-clicks. A higher deposit layer used to swallow left-clicks.
+		local depositClick = CreateFrame("Button", nil, money, "InsecureActionButtonTemplate")
+		depositClick:SetAllPoints(money)
+		depositClick:SetFrameLevel(money:GetFrameLevel() + 10)
+		depositClick:RegisterForClicks("RightButtonUp")
+		if depositClick.SetPropagateMouseClicks then
+			depositClick:SetPropagateMouseClicks(true)
+		end
+
+		local withdrawClick = CreateFrame("Button", nil, money, "InsecureActionButtonTemplate")
+		withdrawClick:SetAllPoints(money)
+		withdrawClick:SetFrameLevel(money:GetFrameLevel() + 11)
+		withdrawClick:RegisterForClicks("LeftButtonUp")
+
+		InstallMoneyTransferTooltips(self, withdrawClick)
+		WireMoneyTransferDebug(self, withdrawClick, "withdraw")
+		WireMoneyTransferDebug(self, depositClick, "deposit")
+		self.bankMoneyWithdrawClick = withdrawClick
+		self.bankMoneyDepositClick = depositClick
+		self:ConfigureMoneyButtons()
 	else
 		F.DecoratePickupMoneyFrame(money, "ANCHOR_RIGHT")
 	end
@@ -319,66 +380,6 @@ function View:UpdateDepositReagentsHighlight()
 	end
 end
 
-function View:OnBankMoneyClick(mouseButton)
-	if InCombatLockdown() or not self:CanUse() or not self.bankType then
-		return
-	end
-	local bankType = self.bankType
-	local moneyTransfer = C_Bank and C_Bank.DoesBankTypeSupportMoneyTransfer and C_Bank.DoesBankTypeSupportMoneyTransfer(bankType)
-	if not moneyTransfer then
-		return
-	end
-	if mouseButton == "RightButton" then
-		if not (C_Bank.CanDepositMoney and C_Bank.CanDepositMoney(bankType)) then
-			return
-		end
-		self:OnDepositMoneyClick()
-	else
-		if not (C_Bank.CanWithdrawMoney and C_Bank.CanWithdrawMoney(bankType)) then
-			return
-		end
-		self:OnWithdrawMoneyClick()
-	end
-end
-
-function View:OnWithdrawMoneyClick()
-	if InCombatLockdown() or not self.bankType then
-		return
-	end
-	if PlaySound and SOUNDKIT then
-		PlaySound(SOUNDKIT.IG_MAINMENU_OPTION)
-	end
-	if StaticPopup_Hide then
-		StaticPopup_Hide("BANK_MONEY_DEPOSIT")
-	end
-	if StaticPopup_Visible and StaticPopup_Visible("BANK_MONEY_WITHDRAW") then
-		StaticPopup_Hide("BANK_MONEY_WITHDRAW")
-		return
-	end
-	if StaticPopup_Show then
-		StaticPopup_Show("BANK_MONEY_WITHDRAW", nil, nil, { bankType = self.bankType })
-	end
-end
-
-function View:OnDepositMoneyClick()
-	if InCombatLockdown() or not self.bankType then
-		return
-	end
-	if PlaySound and SOUNDKIT then
-		PlaySound(SOUNDKIT.IG_MAINMENU_OPTION)
-	end
-	if StaticPopup_Hide then
-		StaticPopup_Hide("BANK_MONEY_WITHDRAW")
-	end
-	if StaticPopup_Visible and StaticPopup_Visible("BANK_MONEY_DEPOSIT") then
-		StaticPopup_Hide("BANK_MONEY_DEPOSIT")
-		return
-	end
-	if StaticPopup_Show then
-		StaticPopup_Show("BANK_MONEY_DEPOSIT", nil, nil, { bankType = self.bankType })
-	end
-end
-
 function View:CanUpdateBankMoney()
 	if InCombatLockdown() then
 		return false
@@ -410,11 +411,17 @@ function View:UpdateBankFooter()
 
 	local canWithdraw = moneyTransfer and C_Bank.CanWithdrawMoney and C_Bank.CanWithdrawMoney(bankType)
 	local canDeposit = moneyTransfer and C_Bank.CanDepositMoney and C_Bank.CanDepositMoney(bankType)
-	local click = self.bankMoneyClick
-	if click then
-		local moneyVisible = self.bankMoneyFrame and self.bankMoneyFrame:IsShown()
-		click:SetShown(moneyTransfer and moneyVisible and true or false)
-		click:SetEnabled(canUse and (canWithdraw or canDeposit) and true or false)
+	local withdrawClick = self.bankMoneyWithdrawClick
+	local depositClick = self.bankMoneyDepositClick
+	local moneyVisible = self.bankMoneyFrame and self.bankMoneyFrame:IsShown()
+	local moneyActive = moneyTransfer and moneyVisible and true or false
+	if withdrawClick then
+		withdrawClick:SetShown(moneyActive)
+		withdrawClick:SetEnabled(canUse and canWithdraw and true or false)
+	end
+	if depositClick then
+		depositClick:SetShown(moneyActive)
+		depositClick:SetEnabled(canUse and canDeposit and true or false)
 	end
 
 	local money = self.bankMoneyFrame
@@ -426,6 +433,9 @@ function View:UpdateBankFooter()
 				MoneyFrame_SetType(money, self:GetMoneyFrameType())
 			end
 			MoneyFrame_UpdateMoney(money)
+			if self:SupportsMoneyTransfer() and not (InCombatLockdown and InCombatLockdown()) then
+				self:ConfigureMoneyButtons()
+			end
 		else
 			self.bankMoneyPending = true
 			money:Hide()
@@ -464,13 +474,19 @@ end
 
 function View:EnsureDepositTarget()
 	if self.depositTargetBag then
-		return
+		for i = 1, #self.tabSlots do
+			local btn = self.tabSlots[i]
+			if btn.bagID == self.depositTargetBag and btn.tabPurchased then
+				return
+			end
+		end
+		self.depositTargetBag = nil
 	end
 	if self.tabSlots then
 		for i = 1, #self.tabSlots do
-			local bagID = self.tabSlots[i].bagID
-			if bagID then
-				self.depositTargetBag = bagID
+			local btn = self.tabSlots[i]
+			if btn.bagID and btn.tabPurchased then
+				self.depositTargetBag = btn.bagID
 				return
 			end
 		end
@@ -675,6 +691,97 @@ function View:BuildChrome()
 	self:BuildTabBar()
 end
 
+function View:GetBankTabData(tabID)
+	if not (tabID and self.bankType and C_Bank and C_Bank.FetchPurchasedBankTabData) then
+		return nil
+	end
+	local tabs = C_Bank.FetchPurchasedBankTabData(self.bankType)
+	if not tabs then
+		return nil
+	end
+	for i = 1, #tabs do
+		local data = tabs[i]
+		if data.ID == tabID then
+			return data
+		end
+	end
+	return nil
+end
+
+--- Blizzard's tab icon/name/filter editor (BankPanelTabSettingsMenuTemplate).
+--- Baganator/Sorted/BetterBags each host their own menu; BankFrame has no
+--- BankTabSettingsMenu child — it lives on BankPanel.TabSettingsMenu.
+function View:EnsureTabSettingsMenu()
+	if self.tabSettingsMenu then
+		return self.tabSettingsMenu
+	end
+	if not self.frame then
+		return nil
+	end
+
+	local menu = CreateFrame("Frame", nil, self.frame, "BankPanelTabSettingsMenuTemplate")
+	menu:SetClampedToScreen(true)
+	menu:SetFrameStrata("DIALOG")
+	menu:SetFrameLevel(self.frame:GetFrameLevel() + 50)
+	if menu.BorderBox then
+		menu.BorderBox:SetFrameLevel(menu:GetFrameLevel() + 5)
+		if menu.BorderBox.OkayButton then
+			menu.BorderBox.OkayButton:SetFrameLevel(menu.BorderBox:GetFrameLevel() + 5)
+		end
+		if menu.BorderBox.CancelButton then
+			menu.BorderBox.CancelButton:SetFrameLevel(menu.BorderBox:GetFrameLevel() + 5)
+		end
+	end
+	menu:Hide()
+	menu:SetPoint("TOPLEFT", self.frame, "TOPRIGHT", 40, 5)
+
+	local view = self
+	menu.GetBankPanel = function()
+		return {
+			GetTabData = function(_, tabID)
+				return view:GetBankTabData(tabID)
+			end,
+		}
+	end
+
+	self.tabSettingsMenu = menu
+	return menu
+end
+
+function View:OpenTabSettings(tabButton, bagID)
+	if not (bagID and tabButton) then
+		return
+	end
+
+	local panel = _G["BankPanel"]
+	if panel then
+		if panel.SetBankType and self.bankType then
+			panel:SetBankType(self.bankType)
+		end
+		if panel.FetchPurchasedBankTabData then
+			panel:FetchPurchasedBankTabData()
+		end
+		if panel.SelectTab then
+			panel:SelectTab(bagID)
+		end
+	end
+
+	local menu = self:EnsureTabSettingsMenu()
+	if not menu then
+		return
+	end
+
+	menu:ClearAllPoints()
+	menu:SetPoint("TOPLEFT", tabButton, "TOPRIGHT", 8, 0)
+
+	if menu.OnOpenTabSettingsRequested then
+		menu:OnOpenTabSettingsRequested(bagID)
+	else
+		menu:SetSelectedTab(bagID)
+		menu:Show()
+	end
+end
+
 function View:BuildTabBar()
 	if self.tabBar then
 		return
@@ -704,14 +811,15 @@ function View:BuildTabBar()
 	end
 
 	local rowWidth = n * size + (n - 1) * gap
-	local purchase = CreateFrame("Button", nil, bar, "UIPanelButtonTemplate")
+	-- Blizzard's script template runs PurchaseTabButtonMixin:OnClick in a secure
+	-- context (see BankFrame.xml BankPanelPurchaseButtonScriptTemplate).
+	local purchase = CreateFrame("Button", nil, bar, "BankPanelPurchaseButtonScriptTemplate, UIPanelButtonTemplate")
 	purchase:SetText(BANKSLOTPURCHASE or L["Purchase"])
 	purchase:SetSize(max(96, (purchase:GetTextWidth() or 60) + 24), TAB_PURCHASE_HEIGHT)
 	purchase:SetPoint("TOP", bar, "TOPLEFT", leftX + rowWidth / 2, -(topInset + size + TAB_PURCHASE_GAP))
-	purchase:SetScript("OnClick", function()
-		self:PurchaseTab()
-	end)
-	purchase:SetScript("OnEnter", function(btn)
+	purchase:RegisterForClicks("LeftButtonUp")
+	purchase:SetAttribute("overrideBankType", self.bankType)
+	purchase:HookScript("OnEnter", function(btn)
 		local tabData = self.bankType and C_Bank and C_Bank.FetchNextPurchasableBankTabData and C_Bank.FetchNextPurchasableBankTabData(self.bankType)
 		GameTooltip:SetOwner(btn, "ANCHOR_TOP")
 		GameTooltip:SetText(BANKSLOTPURCHASE or L["Purchase"])
@@ -720,8 +828,9 @@ function View:BuildTabBar()
 		end
 		GameTooltip:Show()
 	end)
-	purchase:SetScript("OnLeave", GameTooltip_Hide)
+	purchase:HookScript("OnLeave", GameTooltip_Hide)
 	self.purchaseButton = purchase
+	self:ConfigurePurchaseButton()
 
 	local width = C.Layout.PANEL_PADDING_X * 2 + n * size + (n - 1) * gap
 	bar:SetWidth(width)
@@ -759,9 +868,6 @@ function View:UpdateTabBar()
 	if not self.tabSlots then
 		return
 	end
-	if self.tabBar and not self.tabBar:IsShown() then
-		return
-	end
 
 	local bankType = self.bankType
 	local purchased
@@ -776,11 +882,35 @@ function View:UpdateTabBar()
 			SetItemButtonTexture(button, data.icon or QUESTION_MARK_ICON)
 			button.tabName = data.name
 			button.depositFlags = data.depositFlags
+			button.bagID = data.ID or button.bagID
+			button.tabPurchased = true
+			SetIconButtonEnabled(button, true)
 		else
 			SetItemButtonTexture(button, QUESTION_MARK_ICON)
 			button.tabName = nil
 			button.depositFlags = nil
+			button.tabPurchased = false
+			SetIconButtonEnabled(button, false)
 		end
+	end
+
+	if self.depositTargetBag then
+		local valid = false
+		for i = 1, #self.tabSlots do
+			local btn = self.tabSlots[i]
+			if btn.bagID == self.depositTargetBag and btn.tabPurchased then
+				valid = true
+				break
+			end
+		end
+		if not valid then
+			self.depositTargetBag = nil
+			self:EnsureDepositTarget()
+		end
+	end
+
+	if not (self.tabBar and self.tabBar:IsShown()) then
+		return
 	end
 
 	local purchase = self.purchaseButton
@@ -794,6 +924,9 @@ function View:UpdateTabBar()
 			purchase:SetEnabled(canBuy and true or false)
 		end
 		self:ResizeTabBar(purchase:IsShown())
+		if purchase:IsShown() and not (InCombatLockdown and InCombatLockdown()) then
+			self:ConfigurePurchaseButton()
+		end
 	end
 	self:UpdateTabBarSelection()
 end
@@ -820,19 +953,30 @@ function View:ApplyTabBarState()
 	end
 end
 
-function View:PurchaseTab()
-	if not self.bankType or InCombatLockdown() then
+--- Wire secure bank chrome to Blizzard's untainted handlers (out of combat only).
+function View:ConfigureSecureBankButtons()
+	self:ConfigurePurchaseButton()
+	self:ConfigureMoneyButtons()
+end
+
+function View:ConfigurePurchaseButton()
+	local button = self.purchaseButton
+	if not button or not self.bankType or (InCombatLockdown and InCombatLockdown()) then
 		return
 	end
-	if C_Bank and C_Bank.CanPurchaseBankTab and not C_Bank.CanPurchaseBankTab(self.bankType) then
-		return
-	end
-	if PlaySound and SOUNDKIT then
-		PlaySound(SOUNDKIT.IG_MAINMENU_OPTION)
-	end
-	if StaticPopup_Show then
-		StaticPopup_Show("CONFIRM_BUY_BANK_TAB", nil, nil, { bankType = self.bankType })
-	end
+	button:SetAttribute("overrideBankType", self.bankType)
+end
+
+function View:ConfigureMoneyButtons()
+	local withdraw, deposit = F.PrepareBlizzardBankMoneyButtons(self.bankType)
+	local withdrawProxy = F.ConfigureSecureClickProxy(self.bankMoneyWithdrawClick, withdraw, "LeftButton")
+	local depositProxy = F.ConfigureSecureClickProxy(self.bankMoneyDepositClick, deposit, "RightButton")
+	F.DebugBankMoney(self, "configure", {
+		withdrawTarget = withdraw,
+		depositTarget = deposit,
+		withdrawProxy = withdrawProxy,
+		depositProxy = depositProxy,
+	})
 end
 
 function View:UpdateChrome()
@@ -877,6 +1021,12 @@ function View:DrawLayout()
 			bottomInset = self:GetFooterBottomInset(),
 			freeCount = self.freeSlots,
 		},
+		afterLayout = function()
+			local itemButton = ns:GetModule("ItemButton")
+			if itemButton and itemButton.RefreshCooldowns then
+				itemButton:RefreshCooldowns()
+			end
+		end,
 	})
 end
 
@@ -886,6 +1036,7 @@ function View:Open()
 	end
 	self.open = true
 	self.frame:Show()
+	self:ConfigureSecureBankButtons()
 	self:UpdateChrome()
 	self:ApplyTabBarState()
 	self:UpdateBankFooter()
@@ -894,9 +1045,16 @@ end
 
 function View:Close()
 	self.open = false
+	if self.tabSettingsMenu and self.tabSettingsMenu:IsShown() then
+		self.tabSettingsMenu:Hide()
+	end
 	self:UpdateChrome()
 	if self.frame then
 		self.frame:Hide()
+	end
+	local itemButton = ns:GetModule("ItemButton")
+	if itemButton and itemButton.ClearBagHighlight then
+		itemButton:ClearBagHighlight()
 	end
 	if self.categoryContainers then
 		for _, container in pairs(self.categoryContainers) do
@@ -997,6 +1155,13 @@ function View:Sort()
 	if C_Container.SortBank and self.bankType then
 		if PlaySound and SOUNDKIT then
 			PlaySound(SOUNDKIT.UI_BAG_SORTING_01)
+		end
+		ns:BeginBagSort()
+		local bank = ns:GetModule("Bank")
+		if bank then
+			ns:ScheduleBagSortFlush("bank", function()
+				bank:RefreshIfOpen()
+			end)
 		end
 		C_Container.SortBank(self.bankType)
 	end

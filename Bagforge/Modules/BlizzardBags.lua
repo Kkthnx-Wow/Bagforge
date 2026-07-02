@@ -40,6 +40,25 @@ ns.BlizzardBags = BlizzardBags
 
 local lastToggleTime = 0
 local TOGGLE_DEBOUNCE = 0.05
+local pendingNeutralize = false
+local pendingNeutralizeOwner
+
+local function EnsureCombatNeutralizeFrame()
+	if BlizzardBags.combatNeutralizeFrame then
+		return
+	end
+	local frame = CreateFrame("Frame")
+	frame:SetScript("OnEvent", function(f)
+		f:UnregisterEvent("PLAYER_REGEN_ENABLED")
+		if pendingNeutralize and pendingNeutralizeOwner then
+			pendingNeutralize = false
+			local owner = pendingNeutralizeOwner
+			pendingNeutralizeOwner = nil
+			owner:NeutralizeBlizzardBags()
+		end
+	end)
+	BlizzardBags.combatNeutralizeFrame = frame
+end
 
 function BlizzardBags.Apply(target)
 	target.NeutralizeBlizzardBags = BlizzardBags.NeutralizeBlizzardBags
@@ -58,6 +77,16 @@ local function HideContainerFrame(frame, holder)
 end
 
 function BlizzardBags:NeutralizeBlizzardBags()
+	if InCombatLockdown() then
+		pendingNeutralize = true
+		pendingNeutralizeOwner = self
+		EnsureCombatNeutralizeFrame()
+		BlizzardBags.combatNeutralizeFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+		return
+	end
+	pendingNeutralize = false
+	pendingNeutralizeOwner = nil
+
 	if not self.hiddenBagHolder then
 		local holder = CreateFrame("Frame", "BagforgeHiddenBagHolder", UIParent)
 		holder:Hide()
@@ -90,7 +119,9 @@ function BlizzardBags:SuppressBlizzardBags()
 		backpack:Open()
 	end
 	local closeOurs = function()
-		backpack:NeutralizeBlizzardBags()
+		if not InCombatLockdown() then
+			backpack:NeutralizeBlizzardBags()
+		end
 		backpack:Close()
 	end
 	local toggleOurs = function()

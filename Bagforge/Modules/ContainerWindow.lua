@@ -210,12 +210,13 @@ end
 
 --- Re-set the search field's right edge for `rightButtonCount` chrome buttons,
 --- used when a toolbar button shows/hides at runtime (e.g. Delete Cheapest).
-function ContainerWindow:SetSearchReserve(rightButtonCount)
+--- `extraReserve` adds width when a chrome control is wider than `btnW` (toolbar arrow).
+function ContainerWindow:SetSearchReserve(rightButtonCount, extraReserve)
 	if not self.search then
 		return
 	end
 	local _, rightX, _, btnW, btnGap = ContainerWindow.GetChromeInsets()
-	local reserve = SearchReserve(rightX, btnW, btnGap, rightButtonCount)
+	local reserve = SearchReserve(rightX, btnW, btnGap, rightButtonCount) + (extraReserve or 0)
 	local searchH = SearchBoxHeight()
 	local searchY = ContainerWindow.GetChromeSearchY()
 	self.search:SetPoint("TOPRIGHT", self.frame, "TOPRIGHT", -reserve, searchY)

@@ -12,11 +12,15 @@
 	  * Sort modes  - a within-category comparator that shows up as a choice in
 	    the Item Sort dropdown.
 	  * Corner widgets - per-item overlays (upgrade arrows, etc.) on bag buttons.
+	  * Item button callbacks - full-button overlays (TransmogLootHelper, etc.);
+	    see RegisterItemButtonCallback / RequestItemButtonsRefresh.
 
 	Design rules that keep this safe:
 	  * Plugins never touch ns.db or internal modules - they hand us closures.
 	  * Every plugin closure is pcall-guarded so a faulty plugin can't break a
 	    scan, a sort or the classifier (Categories/Scan call through here).
+	  * Use API:SafeSortNumber() before comparing numeric scan fields in custom
+	    sort comparators; secret values must not be used in arithmetic/compare.
 	  * Each registration is attributed to a "source" (the owning plugin). The
 	    settings Plugins page lists sources and lets the player toggle each one;
 	    a disabled source contributes nothing.
@@ -306,6 +310,17 @@ function API:GetSortChoices()
 	return out
 end
 
+--- Safe numeric read for plugin sort comparators (Midnight secret values).
+function API:SafeSortNumber(value, fallback)
+	if ns.Scan and ns.Scan.SafeSortNumber then
+		return ns.Scan.SafeSortNumber(value, fallback or 0)
+	end
+	if value == nil or F.IsSecret(value) then
+		return fallback or 0
+	end
+	return value
+end
+
 -- ---------------------------------------------------------------------------
 -- Corner widgets (per-item button overlays)
 -- ---------------------------------------------------------------------------
@@ -413,6 +428,50 @@ function API:UpdateCornerWidgets(button, entry, ensureTexture)
 			if not shown[corner] then
 				tex:Hide()
 			end
+		end
+	end
+end
+
+-- ---------------------------------------------------------------------------
+-- Item button callbacks (full-button overlays, e.g. TransmogLootHelper)
+-- ---------------------------------------------------------------------------
+local itemButtonCallbacks = {}
+
+--- Register a callback invoked whenever a bag item button is populated or cleared.
+--- `func(button, bagID, slotID, entry)` — entry is nil when the slot is empty.
+--- Mirrors OneWoW_Bags:RegisterItemButtonCallback for third-party overlay addons.
+function API:RegisterItemButtonCallback(key, func)
+	if type(key) ~= "string" or key == "" then
+		F.Print("|cffff5555API:|r RegisterItemButtonCallback needs a unique string key.")
+		return false
+	end
+	if type(func) ~= "function" then
+		F.Print(format("|cffff5555API:|r item button callback '%s' needs a function.", key))
+		return false
+	end
+	for i = 1, #itemButtonCallbacks do
+		if itemButtonCallbacks[i].key == key then
+			itemButtonCallbacks[i].func = func
+			return true
+		end
+	end
+	itemButtonCallbacks[#itemButtonCallbacks + 1] = { key = key, func = func }
+	return true
+end
+
+--- Ask Bagforge to redraw visible item buttons (display-only; no rescan).
+function API:RequestItemButtonsRefresh()
+	if ns.RefreshBags then
+		ns:RefreshBags(false)
+	end
+end
+
+function API:_FireItemButtonCallbacks(button, bagID, slotID, entry)
+	for i = 1, #itemButtonCallbacks do
+		local cb = itemButtonCallbacks[i]
+		local ok, err = pcall(cb.func, button, bagID, slotID, entry)
+		if not ok and F.Print then
+			F.Print(format("|cffff5555API:|r item button callback '%s' failed: %s", cb.key, tostring(err)))
 		end
 	end
 end

@@ -155,6 +155,10 @@ function Pawn:OnEnable()
 	RegisterThirdPartyBag()
 	self:Apply()
 
+	if self._equipHandler then
+		return
+	end
+
 	-- Equipping/changing gear or editing a Pawn scale changes what counts as an
 	-- upgrade; refresh so the arrows track it. A full gear / equipment-set swap
 	-- fires PLAYER_EQUIPMENT_CHANGED once per slot (~16 in a burst), so debounce
@@ -163,7 +167,16 @@ function Pawn:OnEnable()
 	local refresh = F.DebounceNoArgs(0.1, function()
 		Pawn:Apply()
 	end)
-	ns:RegisterEvent("PLAYER_EQUIPMENT_CHANGED", refresh)
+	self._equipHandler = ns:RegisterEvent("PLAYER_EQUIPMENT_CHANGED", refresh)
+end
+
+function Pawn:OnDisable()
+	if self._equipHandler then
+		ns:UnregisterEvent("PLAYER_EQUIPMENT_CHANGED", self._equipHandler)
+		self._equipHandler = nil
+	end
+	ns.PawnIsUpgrade = nil
+	ns:RefreshBags(false)
 end
 
 function Pawn:OnSettingChanged(key)

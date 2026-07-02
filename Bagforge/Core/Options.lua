@@ -26,7 +26,9 @@ local function ApplyModuleSetting(module, key, value)
 	local isMasterEnable = key == "enable" or (key == "active" and module.dbKey ~= "bank")
 	if isMasterEnable then
 		ns:ApplyModuleEnable(module, value and true or false)
-	elseif module.OnSettingChanged then
+	end
+	-- Always run live-apply after lifecycle (Pawn arrows, Delete Cheapest button, etc.).
+	if module.OnSettingChanged then
 		module:OnSettingChanged(key, value)
 	end
 	if module.dbKey then

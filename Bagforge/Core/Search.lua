@@ -315,7 +315,10 @@ end
 local function NameContains(needle)
 	return function(entry)
 		local n = entry.name
-		return n ~= nil and sfind(slower(n), needle, 1, true) ~= nil
+		if not (n and F.CanAccessValue(n)) then
+			return false
+		end
+		return sfind(slower(n), needle, 1, true) ~= nil
 	end
 end
 

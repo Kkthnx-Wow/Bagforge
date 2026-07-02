@@ -1011,7 +1011,7 @@ function Organize:SetJunk(itemID, junked)
 	end
 	junk[itemID] = junked or nil
 	F.Print(format(junked and L["%s is now marked as junk."] or L["%s is no longer junk."], ItemLabel(itemID)))
-	ns:RefreshBags(false)
+	ns:RefreshBags(true)
 	return true
 end
 
@@ -1033,7 +1033,7 @@ function Organize:ClearJunk()
 	end
 	wipe(junk)
 	F.Print(L["Custom junk list cleared."])
-	ns:RefreshBags(false)
+	ns:RefreshBags(true)
 end
 
 -- ---------------------------------------------------------------------------
@@ -1280,6 +1280,10 @@ function Organize:OnSettingChanged(key)
 	-- here changes item membership / display structure, so it rescans too.
 	if key == "itemSort" then
 		self:ValidateSortMode()
+	end
+	if key == "showCategoryCounts" then
+		ns:RefreshBags(false)
+		return
 	end
 	ns:RefreshBags(true)
 end

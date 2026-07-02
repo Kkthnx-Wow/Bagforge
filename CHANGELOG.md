@@ -5,6 +5,37 @@ All notable changes to Bagforge are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.2] - 2026-06-16
+
+### Fixed
+
+- **Warband bank gold deposit** — right-click deposit opens the popup again; one secure proxy now routes left → withdraw and right → deposit (overlapping proxies blocked right-clicks after the withdraw fix).
+- **Custom junk** — marking or unmarking junk immediately moves items into/out of the Junk category without sorting first.
+
+## [1.2.1] - 2026-06-16
+
+### Fixed
+
+- **Warband bank gold** — left-click withdraw works again; deposit click proxy was layered above withdraw and swallowed left-clicks.
+- **Warband bank gold deposit** — right-click deposit works again; single money proxy handles both mouse buttons (overlapping proxies blocked right-clicks).
+- **Custom junk** — marking or clearing junk immediately moves items into/out of the Junk category (rescan on change, not only after sort).
+- **Settings master toggles** — `enable` / `active` now always run `OnSettingChanged` after lifecycle hooks (Pawn arrows, Delete Cheapest button, category filters live-apply without `/reload`).
+- **Pawn module** — `OnDisable` unregisters equipment events and clears upgrade arrows; prevents duplicate handlers on re-enable.
+- **Categories module** — `OnDisable` unregisters zone-entry cache wipe; filter master toggle rescans immediately.
+- **Bank window toggles** — disabling both bank views closes Bagforge UI instead of reopening at the banker; deposit-reagents CVar no longer overwrites saved settings on every enable.
+- **Combat bank chrome** — secure purchase/money proxies rewire after combat ends.
+- **Unusable item tint** — trusts `C_PlayerInfo.CanUseItem` when usable (fixes false red tints on legacy gear).
+
+### Changed
+
+- **Midnight secret guards** — item names, qualities, bind types, and expansion IDs gated before sort/search/compare; bag-bar equipped-bag tooltips wrapped in `pcall`.
+- **Scan caches** — item name, expansion, max-stack, and sell-price caches bounded via `F.CacheSet` (800 entries).
+- **Bind label cache** — bounded to 600 entries.
+- **Cooldown refresh** — removed per-draw full-pool scan; relies on batched `BAG_UPDATE_COOLDOWN` handler.
+- **Currency bar** — `CURRENCY_DISPLAY_UPDATE` refreshes only the token row, not the full backpack grid.
+- **Category counts toggle** — relayout-only refresh (`RefreshBags(false)`) instead of full rescan.
+- **Event bucket** — `F.BucketEvent` reuses a scratch args table to avoid per-fire allocations.
+
 ## [1.2.0] - 2026-06-16
 
 ### Added
@@ -17,7 +48,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Bank right-click deposit queue** — right-click backpack items to queue deposits into the selected purchased bank tab (tab bar must be enabled).
 - **Bank tab deposit target** — left-click a purchased tab to select it as the deposit destination (blue highlight).
 - **Scan-time sell price cache** — vendor values resolved during bag scan for junk totals, delete-cheapest, and vendor sort.
-- **Tooltip unusable cache** — red-line tooltip detection cached at scan time for the unusable-item tint.
+- **Scan-time unusable detection** — `C_PlayerInfo.CanUseItem` and class/level fallback cached at scan time for the unusable-item tint.
 - **Combat-safe item button pool** — buttons pre-warmed at login; pool growth deferred until combat ends.
 - **Bank batch layout** — large warband banks render in batches (80 slots per frame) to avoid UI hitches.
 - **Backpack batch layout** — category panels and the main bag use the same batched placement.
@@ -44,7 +75,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Deposit queue drain** — re-entry guard prevents overlapping drains; retryable failures stay queued instead of being dropped.
 - **Secure bank actions** — tab purchase uses Blizzard's `BankPanelPurchaseButtonScriptTemplate` + `overrideBankType` (Baganator/BetterBags/Sorted pattern). Money transfer uses `InsecureActionButtonTemplate` click proxies to Blizzard withdraw/deposit buttons.
 - **Unusable item tint** — trusts `C_PlayerInfo.CanUseItem` when it says an item is usable (fixes false red tints on legacy gear); class/level fallback only when the API is unavailable; removed tooltip red-line heuristics that flagged wrong stats.
-- **Warband bank gold** — left-click withdraw works again; deposit click proxy was layered above withdraw and swallowed left-clicks; tooltip hover overlay removed in favor of the withdraw proxy.
 - **Bank tab settings** — right-click purchased tabs opens Blizzard's native icon/name/filter editor (`BankPanelTabSettingsMenuTemplate`); was calling non-existent `BankFrame.BankTabSettingsMenu`. Tab icons and names refresh immediately on save (`BANK_TAB_SETTINGS_UPDATED`).
 - **Item Info (Midnight)** — required-level and tooltip colour checks guard secret values before compare/arithmetic.
 - **Plugin API** — `API:SafeSortNumber()` for secret-safe custom sort comparators; plugin sort errors fall back to itemID tiebreak.

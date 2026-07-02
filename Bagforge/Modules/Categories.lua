@@ -170,7 +170,7 @@ local function GetProps(itemID)
 	-- expacID for legacy/lower filters; only finalise once GetItemInfo returns.
 	if p.expacID == nil then
 		local _, _, _, _, _, _, _, _, _, _, _, _, _, _, expacID = C_Item.GetItemInfo(itemID)
-		if expacID ~= nil then
+		if expacID ~= nil and F.NotSecret(expacID) then
 			p.expacID = expacID
 		end
 	end
@@ -277,9 +277,9 @@ local function IsWarbound(entry)
 		end
 	end
 	-- Last resort: GetItemInfo bindType (covers clients without C_TooltipInfo).
-	if ITEM_BIND and entry.hyperlink and C_Item and C_Item.GetItemInfo then
+	if ITEM_BIND and entry.hyperlink and not F.IsSecret(entry.hyperlink) and C_Item and C_Item.GetItemInfo then
 		local bindType = select(14, C_Item.GetItemInfo(entry.hyperlink))
-		if bindType ~= nil then
+		if bindType ~= nil and F.NotSecret(bindType) then
 			if bindType == ITEM_BIND.ToBnetAccountUntilEquipped then
 				entry.bindLabel = "WuE"
 				return true
@@ -312,7 +312,8 @@ local function IsDecor(entry)
 end
 
 local function IsPrimordialStone(entry)
-	return entry.itemID and primordialStones[entry.itemID]
+	local id = entry.itemID
+	return id and F.NotSecret(id) and primordialStones[id]
 end
 
 local function IsLegacy(entry)
@@ -320,7 +321,7 @@ local function IsLegacy(entry)
 		return false
 	end
 	local p = GetProps(entry.itemID)
-	return p and p.expacID and p.expacID < CURRENT_EXPANSION
+	return p and F.NotSecret(p.expacID) and p.expacID < CURRENT_EXPANSION
 end
 
 local function IsLowerLevel(entry, threshold)
@@ -767,15 +768,25 @@ end
 -- Lifecycle
 -- ---------------------------------------------------------------------------
 function Categories:OnEnable()
+	if self._pewHandler then
+		return
+	end
 	-- propCache stores per-itemID properties (toy, anima, decor, azerite, expacID)
 	-- that are truly static for an item type. However, the toy tri-state can get
 	-- stuck if C_ToyBox returned inconclusive data before the toy database was
 	-- fully loaded (which completes a few seconds after login). Clearing on zone
 	-- entry ensures the next scan resolves any previously ambiguous toy flags and
 	-- picks up correct expacID data for all items in the new environment.
-	self:RegisterEvent("PLAYER_ENTERING_WORLD", function()
+	self._pewHandler = self:RegisterEvent("PLAYER_ENTERING_WORLD", function()
 		wipe(propCache)
 	end)
+end
+
+function Categories:OnDisable()
+	if self._pewHandler then
+		ns:UnregisterEvent("PLAYER_ENTERING_WORLD", self._pewHandler)
+		self._pewHandler = nil
+	end
 end
 
 -- ---------------------------------------------------------------------------

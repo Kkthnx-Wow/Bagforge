@@ -302,26 +302,16 @@ function View:BuildBankFooter()
 		DisableMoneyPickup(money)
 		EnsureMoneyTransferHighlight(money)
 
-		-- Deposit below withdraw: both cover the money row, but only withdraw
-		-- registers left-clicks. A higher deposit layer used to swallow left-clicks.
-		local depositClick = CreateFrame("Button", nil, money, "InsecureActionButtonTemplate")
-		depositClick:SetAllPoints(money)
-		depositClick:SetFrameLevel(money:GetFrameLevel() + 10)
-		depositClick:RegisterForClicks("RightButtonUp")
-		if depositClick.SetPropagateMouseClicks then
-			depositClick:SetPropagateMouseClicks(true)
-		end
+		-- One proxy handles both buttons; overlapping layers swallowed clicks.
+		local moneyClick = CreateFrame("Button", nil, money, "InsecureActionButtonTemplate")
+		moneyClick:SetAllPoints(money)
+		moneyClick:SetFrameLevel(money:GetFrameLevel() + 10)
+		moneyClick:RegisterForClicks("LeftButtonUp", "RightButtonUp")
 
-		local withdrawClick = CreateFrame("Button", nil, money, "InsecureActionButtonTemplate")
-		withdrawClick:SetAllPoints(money)
-		withdrawClick:SetFrameLevel(money:GetFrameLevel() + 11)
-		withdrawClick:RegisterForClicks("LeftButtonUp")
-
-		InstallMoneyTransferTooltips(self, withdrawClick)
-		WireMoneyTransferDebug(self, withdrawClick, "withdraw")
-		WireMoneyTransferDebug(self, depositClick, "deposit")
-		self.bankMoneyWithdrawClick = withdrawClick
-		self.bankMoneyDepositClick = depositClick
+		InstallMoneyTransferTooltips(self, moneyClick)
+		WireMoneyTransferDebug(self, moneyClick, "withdraw")
+		WireMoneyTransferDebug(self, moneyClick, "deposit")
+		self.bankMoneyClick = moneyClick
 		self:ConfigureMoneyButtons()
 	else
 		F.DecoratePickupMoneyFrame(money, "ANCHOR_RIGHT")
@@ -411,17 +401,12 @@ function View:UpdateBankFooter()
 
 	local canWithdraw = moneyTransfer and C_Bank.CanWithdrawMoney and C_Bank.CanWithdrawMoney(bankType)
 	local canDeposit = moneyTransfer and C_Bank.CanDepositMoney and C_Bank.CanDepositMoney(bankType)
-	local withdrawClick = self.bankMoneyWithdrawClick
-	local depositClick = self.bankMoneyDepositClick
+	local moneyClick = self.bankMoneyClick
 	local moneyVisible = self.bankMoneyFrame and self.bankMoneyFrame:IsShown()
 	local moneyActive = moneyTransfer and moneyVisible and true or false
-	if withdrawClick then
-		withdrawClick:SetShown(moneyActive)
-		withdrawClick:SetEnabled(canUse and canWithdraw and true or false)
-	end
-	if depositClick then
-		depositClick:SetShown(moneyActive)
-		depositClick:SetEnabled(canUse and canDeposit and true or false)
+	if moneyClick then
+		moneyClick:SetShown(moneyActive)
+		moneyClick:SetEnabled(canUse and (canWithdraw or canDeposit) and true or false)
 	end
 
 	local money = self.bankMoneyFrame
@@ -969,13 +954,12 @@ end
 
 function View:ConfigureMoneyButtons()
 	local withdraw, deposit = F.PrepareBlizzardBankMoneyButtons(self.bankType)
-	local withdrawProxy = F.ConfigureSecureClickProxy(self.bankMoneyWithdrawClick, withdraw, "LeftButton")
-	local depositProxy = F.ConfigureSecureClickProxy(self.bankMoneyDepositClick, deposit, "RightButton")
+	local wired = F.ConfigureSecureBankMoneyProxy(self.bankMoneyClick, withdraw, deposit)
 	F.DebugBankMoney(self, "configure", {
 		withdrawTarget = withdraw,
 		depositTarget = deposit,
-		withdrawProxy = withdrawProxy,
-		depositProxy = depositProxy,
+		withdrawProxy = wired,
+		depositProxy = wired,
 	})
 end
 
@@ -1021,12 +1005,6 @@ function View:DrawLayout()
 			bottomInset = self:GetFooterBottomInset(),
 			freeCount = self.freeSlots,
 		},
-		afterLayout = function()
-			local itemButton = ns:GetModule("ItemButton")
-			if itemButton and itemButton.RefreshCooldowns then
-				itemButton:RefreshCooldowns()
-			end
-		end,
 	})
 end
 

@@ -283,6 +283,8 @@ function F.DebounceTrailingNoArgs(delay, func)
 end
 
 local bucketTimers = {}
+local bucketArgs = {}
+local bucketArgCount = 0
 
 --- Bucket rapid-fire events (BetterBags-style): each fire resets the timer;
 --- `handler` runs once after `delay` seconds of quiet. Registers on the
@@ -293,14 +295,17 @@ function F.BucketEvent(event, delay, handler)
 	end
 	delay = delay or 0.2
 	ns:RegisterEvent(event, function(...)
-		local args = { ... }
+		bucketArgCount = select("#", ...)
+		for i = 1, bucketArgCount do
+			bucketArgs[i] = select(i, ...)
+		end
 		local timer = bucketTimers[event]
 		if timer and timer.Cancel then
 			timer:Cancel()
 		end
 		bucketTimers[event] = C_Timer.NewTimer(delay, function()
 			bucketTimers[event] = nil
-			handler(unpack(args))
+			handler(unpack(bucketArgs, 1, bucketArgCount))
 		end)
 	end)
 end
@@ -654,6 +659,36 @@ function F.PrepareBlizzardBankMoneyButtons(bankType)
 	return withdraw, deposit
 end
 
+--- Wire left/right secure bank money transfer on one proxy (avoids overlapping
+--- frames swallowing clicks meant for the other mouse button).
+function F.ConfigureSecureBankMoneyProxy(button, withdrawTarget, depositTarget)
+	if not button or (InCombatLockdown and InCombatLockdown()) then
+		return false
+	end
+	if not withdrawTarget and not depositTarget then
+		return false
+	end
+	button:SetAttribute("useOnKeyDown", false)
+	button:SetAttribute("type", nil)
+	button:SetAttribute("clickbutton", nil)
+	if withdrawTarget then
+		button:SetAttribute("type1", "click")
+		button:SetAttribute("clickbutton1", withdrawTarget)
+	else
+		button:SetAttribute("type1", nil)
+		button:SetAttribute("clickbutton1", nil)
+	end
+	if depositTarget then
+		button:SetAttribute("type2", "click")
+		button:SetAttribute("clickbutton2", depositTarget)
+	else
+		button:SetAttribute("type2", nil)
+		button:SetAttribute("clickbutton2", nil)
+	end
+	button:EnableMouse(true)
+	return true
+end
+
 --- Point `button` (InsecureActionButtonTemplate) at Blizzard's secure button.
 --- `mouseButton` is "LeftButton" or "RightButton" (maps to secure suffix 1/2).
 function F.ConfigureSecureClickProxy(button, target, mouseButton)
@@ -717,8 +752,7 @@ function F.DebugBankMoney(view, tag, extra)
 	local moneyFrame = panel and panel.MoneyFrame
 	local withdraw = moneyFrame and moneyFrame.WithdrawButton
 	local deposit = moneyFrame and moneyFrame.DepositButton
-	local proxyW = view and view.bankMoneyWithdrawClick
-	local proxyD = view and view.bankMoneyDepositClick
+	local proxy = view and view.bankMoneyClick
 
 	F.Print(prefix, "view", view and view.enabledKey or "nil", "open", DbgYesNo(view and view.open))
 	F.Print(prefix, "bankType", bankType, "transfer", DbgYesNo(view and view.SupportsMoneyTransfer and view:SupportsMoneyTransfer()))
@@ -743,32 +777,20 @@ function F.DebugBankMoney(view, tag, extra)
 	if bfMoney then
 		F.Print(prefix, "bfMoney", DbgYesNo(bfMoney:IsShown()), DbgYesNo(bfMoney:IsVisible()), "enabled", DbgYesNo(bfMoney:IsMouseEnabled()))
 	end
-	if proxyW then
+	if proxy then
 		F.Print(
 			prefix,
-			"proxyW",
-			DbgYesNo(proxyW:IsShown()),
-			DbgYesNo(proxyW:IsEnabled()),
+			"proxy",
+			DbgYesNo(proxy:IsShown()),
+			DbgYesNo(proxy:IsEnabled()),
 			"mouse",
-			DbgYesNo(proxyW:IsMouseEnabled()),
-			"target",
+			DbgYesNo(proxy:IsMouseEnabled()),
+			"withdraw",
 			DbgName(extra and extra.withdrawTarget or withdraw),
-			"wired",
-			DbgYesNo(extra and extra.withdrawProxy)
-		)
-	end
-	if proxyD then
-		F.Print(
-			prefix,
-			"proxyD",
-			DbgYesNo(proxyD:IsShown()),
-			DbgYesNo(proxyD:IsEnabled()),
-			"mouse",
-			DbgYesNo(proxyD:IsMouseEnabled()),
-			"target",
+			"deposit",
 			DbgName(extra and extra.depositTarget or deposit),
 			"wired",
-			DbgYesNo(extra and extra.depositProxy)
+			DbgYesNo(extra and extra.withdrawProxy)
 		)
 	end
 

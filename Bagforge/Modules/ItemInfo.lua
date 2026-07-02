@@ -322,7 +322,7 @@ function ItemInfo:GetBindLabel(entry)
 	-- Only memoise a definitive answer; if neither source had data yet (item not
 	-- cached), leave it unresolved so a later rescan can fill it in.
 	if resolved and id then
-		bindLabelCache[id] = label or false
+		F.CacheSet(bindLabelCache, id, label or false, 600)
 	end
 	return label
 end

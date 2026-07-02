@@ -59,13 +59,13 @@ local function GetBasics(itemID)
 	end
 	local name, _, _, _, _, _, _, stack, _, _, _, _, _, _, expacID = GetItemInfo(itemID)
 	if stack and F.NotSecret(stack) then
-		maxStackCache[itemID] = stack
+		F.CacheSet(maxStackCache, itemID, stack, 800)
 	end
-	if name then
-		nameCache[itemID] = name
+	if name and F.CanAccessValue(name) then
+		F.CacheSet(nameCache, itemID, name, 800)
 	end
-	if expacID then
-		expacCache[itemID] = expacID
+	if expacID ~= nil and F.NotSecret(expacID) then
+		F.CacheSet(expacCache, itemID, expacID, 800)
 	end
 	return stack, name, expacID
 end
@@ -86,7 +86,7 @@ local function GetSellPrice(itemID, hyperlink)
 		price = select(11, GetItemInfo(itemID))
 	end
 	if price ~= nil and F.NotSecret(price) then
-		sellPriceCache[itemID] = price
+		F.CacheSet(sellPriceCache, itemID, price, 800)
 		return price
 	end
 	return nil
@@ -304,6 +304,9 @@ local SORTED_INV_SLOT = BuildSortMap({
 })
 
 local function SortedLookup(map, id)
+	if F.IsSecret(id) then
+		return 200
+	end
 	return map[id] or ((id or 0) + 200)
 end
 
@@ -353,7 +356,8 @@ local function SortValue(entry, key)
 	elseif key == "invertedExpansion" then
 		return -SafeSortNumber(entry.expacID, 0)
 	elseif key == "itemName" then
-		return entry.name or ""
+		local name = entry.name
+		return (name and F.CanAccessValue(name)) and name or ""
 	elseif key == "invertedItemID" then
 		return -SafeSortNumber(entry.itemID, 0)
 	elseif key == "invertedItemCount" then

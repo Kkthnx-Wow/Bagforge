@@ -654,10 +654,6 @@ function Backpack:Draw()
 			if bank and bank.IsBankOpen and bank:IsBankOpen() then
 				bank:RefreshItemContext()
 			end
-			local itemButton = ns:GetModule("ItemButton")
-			if itemButton and itemButton.RefreshCooldowns then
-				itemButton:RefreshCooldowns()
-			end
 		end,
 	})
 end
@@ -858,7 +854,11 @@ function Backpack:OnEnable()
 		end
 	end)
 
-	ns:RegisterEvent("CURRENCY_DISPLAY_UPDATE", queueDraw)
+	ns:RegisterEvent("CURRENCY_DISPLAY_UPDATE", function()
+		if Backpack:IsShown() then
+			Backpack:UpdateCurrencyBar()
+		end
+	end)
 
 	local refreshBagBar = F.DebounceNoArgs(0.05, function()
 		if Backpack:IsShown() then

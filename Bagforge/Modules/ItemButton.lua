@@ -265,7 +265,7 @@ local function Button_SetItem(self, entry)
 		local level = ns.ShowItemLevel and (entry.classID == ITEM_CLASS.Weapon or entry.classID == ITEM_CLASS.Armor) and entry.ilvl
 		if level and F.NotSecret(level) and level > 0 then
 			levelText:SetText(level)
-			local color = QUALITY_COLORS and QUALITY_COLORS[entry.quality]
+			local color = F.NotSecret(entry.quality) and QUALITY_COLORS and QUALITY_COLORS[entry.quality]
 			if color then
 				levelText:SetTextColor(color[1], color[2], color[3])
 			else

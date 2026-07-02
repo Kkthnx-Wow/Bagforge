@@ -399,8 +399,10 @@ function Bank:OnSettingChanged(key)
 		else
 			self:OnDisable()
 		end
-		if self:IsBankOpen() or self:OpenView() then
+		if self:IsRuntimeActive() and (self:IsBankOpen() or self:OpenView()) then
 			self:OpenBanking()
+		elseif not self:IsRuntimeActive() then
+			self:CloseAll()
 		end
 		return
 	end
@@ -568,6 +570,14 @@ function Bank:InstallHooks()
 	track("PLAYER_REGEN_ENABLED", ns:RegisterEvent("PLAYER_REGEN_ENABLED", function()
 		for i = 1, #Bank.views do
 			local view = Bank.views[i]
+			if view.open then
+				if view.ConfigureSecureBankButtons then
+					view:ConfigureSecureBankButtons()
+				end
+				if view.UpdateBankFooter then
+					view:UpdateBankFooter()
+				end
+			end
 			if view.pendingDraw or view.bankMoneyPending then
 				view:RefreshIfOpen()
 			end
@@ -613,7 +623,7 @@ function Bank:OnEnable()
 	ns.db.bank.position = nil
 	ns.db.bank.positions = nil
 
-	if GetCVarBool then
+	if ns.db.bank.depositReagents == nil and GetCVarBool then
 		ns.db.bank.depositReagents = GetCVarBool("bankAutoDepositReagents") and true or false
 	end
 	self:ApplyDepositReagents()

@@ -147,8 +147,8 @@ end
 
 local function BagSlot_OnEnter(button)
 	GameTooltip:SetOwner(button, "ANCHOR_RIGHT")
-	local hasItem = GameTooltip:SetInventoryItem("player", button.invID)
-	if not hasItem then
+	local ok, hasItem = pcall(GameTooltip.SetInventoryItem, GameTooltip, "player", button.invID)
+	if not ok or not hasItem then
 		local ContainerFrame_IsReagentBag = _G["ContainerFrame_IsReagentBag"]
 		local title = (ContainerFrame_IsReagentBag and ContainerFrame_IsReagentBag(button.bagID)) and EQUIP_CONTAINER_REAGENT or EQUIP_CONTAINER
 		if GameTooltip_SetTitle then

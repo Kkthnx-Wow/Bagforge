@@ -27,14 +27,14 @@ local DeleteCursorItem = DeleteCursorItem
 local InCombatLockdown = InCombatLockdown
 local IsAltKeyDown = IsAltKeyDown
 local IsControlKeyDown = IsControlKeyDown
+local C_Item = C_Item
+local ItemLocation = ItemLocation
 local SetItemButtonTexture = SetItemButtonTexture
 local SetItemButtonCount = SetItemButtonCount
 local SetItemButtonQuality = SetItemButtonQuality
 local SetItemButtonDesaturated = SetItemButtonDesaturated
 local SetItemButtonTextureVertexColor = SetItemButtonTextureVertexColor
 local ClearItemButtonOverlay = _G["ClearItemButtonOverlay"]
-local ITEM_CLASS = Enum.ItemClass
-local POOR_QUALITY = Enum.ItemQuality.Poor
 local RARE_QUALITY = Enum.ItemQuality.Rare
 local HEIRLOOM_QUALITY = Enum.ItemQuality.Heirloom
 local QUALITY_COLORS = ns.C.QualityColors
@@ -60,6 +60,7 @@ local slotsByBag = {}
 local combatLayoutPending = false
 local bankRouted = setmetatable({}, { __mode = "k" })
 local highlightedBagID = nil
+local FindSlotButton -- forward decl; assigned below RefreshSlot helpers
 
 local function ClearBagHighlightFor(bagID)
 	local set = slotsByBag[bagID]
@@ -185,15 +186,70 @@ local function ApplyUnusableTint(parent, entry)
 	end
 end
 
+-- Warband / bank deposit dim is Blizzard ItemContextOverlay (0.8 black) via
+-- UpdateItemContextMatching — do NOT add a second overlay. 1.5.0 stacked an
+-- Ellesmere-style 0.75 dim on top and icons went pitch black.
+
 -- `entry` is one slot record from Items:GetSlots().
+local function SnapshotButtonPaint(entry)
+	return {
+		icon = entry.icon,
+		count = entry.count,
+		quality = entry.quality,
+		isLocked = entry.isLocked,
+		hyperlink = entry.hyperlink,
+		isFiltered = entry.isFiltered,
+		quest = entry.quest,
+		questID = entry.questID,
+		isActiveQuest = entry.isActiveQuest,
+		readable = entry.readable,
+		showIlvl = entry.showIlvl,
+		ilvl = entry.ilvl,
+		showBindLabel = entry.showBindLabel,
+		isUpgrade = entry.isUpgrade,
+		isUnusable = entry.isUnusable,
+		itemID = entry.itemID,
+		isNewItem = entry.isNewItem,
+	}
+end
+
+local function ButtonPaintUnchanged(snap, entry)
+	return snap.icon == entry.icon
+		and snap.count == entry.count
+		and snap.quality == entry.quality
+		and snap.isLocked == entry.isLocked
+		and snap.hyperlink == entry.hyperlink
+		and snap.isFiltered == entry.isFiltered
+		and snap.quest == entry.quest
+		and snap.questID == entry.questID
+		and snap.isActiveQuest == entry.isActiveQuest
+		and snap.readable == entry.readable
+		and snap.showIlvl == entry.showIlvl
+		and snap.ilvl == entry.ilvl
+		and snap.showBindLabel == entry.showBindLabel
+		and snap.isUpgrade == entry.isUpgrade
+		and snap.isUnusable == entry.isUnusable
+		and snap.itemID == entry.itemID
+		and snap.isNewItem == entry.isNewItem
+end
+
 local function Button_SetItem(self, entry)
+	if not entry then
+		return
+	end
 	local key = SlotKey(entry.bag, entry.slot)
 	if self.slotKey ~= key then
 		UnregisterSlot(self)
 		self.slotKey = key
+		self._paintSnap = nil
 	end
 	self.entry = entry
 	slotButtons[key] = self
+
+	local snap = self._paintSnap
+	if snap and ButtonPaintUnchanged(snap, entry) then
+		return
+	end
 
 	local bag = entry.bag
 	if self._highlightBag and self._highlightBag ~= bag then
@@ -215,13 +271,39 @@ local function Button_SetItem(self, entry)
 		ClearItemButtonOverlay(self.button)
 	end
 	SetItemButtonTexture(self.button, entry.icon)
-	-- Bag stack counts are readable in Midnight, but guard anyway - it's cheap
-	-- and SetItemButtonCount does a comparison internally that a secret would
-	-- choke on.
-	SetItemButtonCount(self.button, F.NotSecret(entry.count) and entry.count or 1)
-	-- Stock quality ring (suppressOverlays = false) - Blizzard's default look.
-	if F.NotSecret(entry.quality) then
-		SetItemButtonQuality(self.button, entry.quality, entry.hyperlink, false, entry.isBound)
+	SetItemButtonCount(self.button, entry.count or 1)
+	-- ClearItemButtonOverlay does NOT clear IconBorder (ItemButtonTemplate.lua).
+	-- Always SetItemButtonQuality so recycled buttons don't keep a stale ring.
+	-- Quality must be the *instance* (container / link / ItemLocation) — bare
+	-- GetItemQualityByID(itemID) is the item template and often Uncommon/green
+	-- while bonus-ID gear is Epic (Baganator live buttons use cache/container).
+	local quality = nil
+	local bag, slot = entry.bag, entry.slot
+	if bag and slot and ItemLocation and C_Item.GetItemQuality then
+		local loc = ItemLocation:CreateFromBagAndSlot(bag, slot)
+		if loc and C_Item.DoesItemExist and C_Item.DoesItemExist(loc) then
+			quality = C_Item.GetItemQuality(loc)
+		end
+	end
+	if quality == nil then
+		local link = entry.hyperlink
+		if link and C_Item.GetItemQualityByID then
+			quality = C_Item.GetItemQualityByID(link)
+		end
+	end
+	if quality == nil then
+		quality = entry.quality
+	end
+	if quality ~= nil then
+		SetItemButtonQuality(self.button, quality, entry.hyperlink or entry.itemID, false, entry.isBound)
+	else
+		SetItemButtonQuality(self.button, nil)
+	end
+	if SetItemCraftingQualityOverlay then
+		local link = entry.hyperlink
+		if link then
+			SetItemCraftingQualityOverlay(self.button, link)
+		end
 	end
 	SetItemButtonDesaturated(self.button, entry.isLocked)
 
@@ -230,10 +312,19 @@ local function Button_SetItem(self, entry)
 		self.button:UpdateExtended()
 	end
 	if self.button.UpdateQuestItem then
-		self.button:UpdateQuestItem(entry.quest, entry.questID, entry.isActiveQuest)
+		local quest = entry.quest
+		local questID = entry.questID
+		local active = entry.isActiveQuest
+		if quest == nil then
+			quest = false
+		end
+		if active == nil then
+			active = false
+		end
+		self.button:UpdateQuestItem(quest, questID, active)
 	end
 	if self.button.UpdateNewItem then
-		self.button:UpdateNewItem(entry.quality)
+		self.button:UpdateNewItem(quality ~= nil and quality or false)
 	end
 	-- We draw our own always-on junk coin (below), so keep Blizzard's merchant-only
 	-- JunkIcon suppressed to avoid a doubled coin in the same corner.
@@ -258,14 +349,14 @@ local function Button_SetItem(self, entry)
 		self.button:SetReadable(entry.readable)
 	end
 
-	-- Item level (quality-coloured) on equippable gear. Gated by the ItemInfo
-	-- module's live flag so the toggle applies without per-button bookkeeping.
+	-- Item level (quality-coloured) on equippable gear. Pre-computed on the scan
+	-- entry as entry.showIlvl so paint time stays presentation-only.
 	local levelText = self.button.itemLevelText
 	if levelText then
-		local level = ns.ShowItemLevel and (entry.classID == ITEM_CLASS.Weapon or entry.classID == ITEM_CLASS.Armor) and entry.ilvl
-		if level and F.NotSecret(level) and level > 0 then
+		if entry.showIlvl then
+			local level = entry.ilvl
 			levelText:SetText(level)
-			local color = F.NotSecret(entry.quality) and QUALITY_COLORS and QUALITY_COLORS[entry.quality]
+			local color = quality ~= nil and QUALITY_COLORS and QUALITY_COLORS[quality]
 			if color then
 				levelText:SetTextColor(color[1], color[2], color[3])
 			else
@@ -278,11 +369,10 @@ local function Button_SetItem(self, entry)
 		end
 	end
 
-	-- Bind status (BoE / BoU / BoA / WuE). ns.GetItemBindLabel is published by
-	-- the ItemInfo module only while the toggle is on (nil otherwise).
+	-- Bind status (BoE / BoU / BoA / WuE). Pre-computed as entry.showBindLabel.
 	local bindText = self.button.bindText
 	if bindText then
-		local label = ns.GetItemBindLabel and ns.GetItemBindLabel(entry)
+		local label = entry.showBindLabel
 		if label then
 			bindText:SetText(label)
 			bindText:SetTextColor(BindColor(label))
@@ -293,15 +383,10 @@ local function Button_SetItem(self, entry)
 		end
 	end
 
-	-- Pawn (or any plugin corner widget) may show an upgrade arrow via API.
+	-- Pawn upgrade arrow — pre-computed on the entry as entry.isUpgrade.
 	local upgradeIcon = self.button.upgradeIcon
 	if upgradeIcon then
-		local check = ns.PawnIsUpgrade
-		local useLegacy = check ~= nil
-		if useLegacy and ns.API and ns.API.HasCornerWidget then
-			useLegacy = not ns.API:HasCornerWidget("pawn.upgrade")
-		end
-		upgradeIcon:SetShown(useLegacy and check(entry.hyperlink) == true)
+		upgradeIcon:SetShown(entry.isUpgrade == true)
 	end
 
 	if ItemButton.UpdateCornerWidgets then
@@ -322,11 +407,11 @@ local function Button_SetItem(self, entry)
 	local tag, junkMark = self.button.bfTag, self.button.bfJunk
 	if tag or junkMark then
 		local o = ns.db and ns.db.organize
-		local junkList = ns.global and ns.global.customJunk
+		local categories = ns:GetModule("Categories")
 		local id = entry.itemID
-		local safe = id and F.NotSecret(id)
-		local tagged = o and o.customEnable and safe and o.assignments[id]
-		local junked = (F.NotSecret(entry.quality) and entry.quality == POOR_QUALITY and not entry.noValue) or (junkList and safe and junkList[id] and true)
+		local petTrash = id and categories and categories.IsPetTrashItem and categories:IsPetTrashItem(id)
+		local tagged = o and o.customEnable and id and o.assignments[id]
+		local junked = not tagged and not petTrash and ns.API and ns.API.IsItemJunk and ns.API:IsItemJunk(entry)
 		if tag then
 			tag:SetShown(tagged and true or false)
 		end
@@ -342,10 +427,12 @@ local function Button_SetItem(self, entry)
 	end
 
 	self.button:Show()
+	self._paintSnap = SnapshotButtonPaint(entry)
 end
 
 local function Button_Clear(self)
 	UnregisterSlot(self)
+	self._paintSnap = nil
 	self:SetID(0)
 	self.button:SetID(0)
 	if ClearItemButtonOverlay then
@@ -413,22 +500,46 @@ local function Button_Clear(self)
 	end
 end
 
--- Ctrl is WoW's default DRESSUP modifier, so a Ctrl(+Alt) click on a bag item
--- normally opens the dressing room before our delete post-hook can act. Blizzard's
--- ContainerFrameItemButtonMixin:OnModifiedClick bails the moment HandleModifiedItemClick
--- reports the click handled, so while delete mode is armed and the player holds the
--- delete combo we swallow it here. HandleModifiedItemClick is an insecure FrameXML
--- global, and the guard is narrow (delete mode + Ctrl+Alt only), so nothing else is
--- affected.
-local origHandleModifiedItemClick = _G["HandleModifiedItemClick"]
-if origHandleModifiedItemClick then
-	_G["HandleModifiedItemClick"] = function(link, itemLocation)
+-- Ctrl is WoW's default DRESSUP modifier; delete mode installs a narrow global
+-- hook via InstallDeleteClickHook (Organize:SetMode) so Ctrl+Alt is not stolen
+-- from other bag addons while delete mode is disarmed.
+
+local origHandleModifiedItemClick
+local deleteClickHooked = false
+local deleteClickWrapper
+
+function ItemButton:InstallDeleteClickHook()
+	if deleteClickHooked then
+		return
+	end
+	origHandleModifiedItemClick = _G["HandleModifiedItemClick"]
+	if not origHandleModifiedItemClick then
+		return
+	end
+	-- Narrow replace while delete mode is armed: swallow Ctrl+Alt so dress-up
+	-- doesn't steal the click. Uninstall restores the prior global only if we
+	-- still own it (another addon may have wrapped after us).
+	deleteClickWrapper = function(link, itemLocation)
 		local organize = ns:GetModule("Organize")
 		if organize and organize.mode == "delete" and IsAltKeyDown() and IsControlKeyDown() then
 			return true
 		end
 		return origHandleModifiedItemClick(link, itemLocation)
 	end
+	_G["HandleModifiedItemClick"] = deleteClickWrapper
+	deleteClickHooked = true
+end
+
+function ItemButton:UninstallDeleteClickHook()
+	if not deleteClickHooked then
+		return
+	end
+	if deleteClickWrapper and _G["HandleModifiedItemClick"] == deleteClickWrapper and origHandleModifiedItemClick then
+		_G["HandleModifiedItemClick"] = origHandleModifiedItemClick
+	end
+	deleteClickHooked = false
+	deleteClickWrapper = nil
+	origHandleModifiedItemClick = nil
 end
 
 -- While Organize's assign mode is armed, a left-click on any item opens its
@@ -450,8 +561,12 @@ local function OnItemButtonClick(button, mouseButton)
 	if not entry then
 		return
 	end
+	local wasNew = entry.isNewItem
 	if ns.Recent then
 		ns.Recent:Clear(entry.bag, entry.slot)
+	end
+	if wasNew and ns.RefreshRecentSlot then
+		ns:RefreshRecentSlot(entry.bag, entry.slot)
 	end
 
 	local organize = ns:GetModule("Organize")
@@ -459,7 +574,7 @@ local function OnItemButtonClick(button, mouseButton)
 
 	if mouseButton == "LeftButton" and not mode and IsAltKeyDown() and not IsControlKeyDown() then
 		local db = ns.db and ns.db.backpack
-		if (not db or db.flashFind ~= false) and entry.itemID and F.NotSecret(entry.itemID) then
+		if (not db or db.flashFind ~= false) and entry.itemID then
 			ItemButton:FlashFind(entry.itemID)
 		end
 		if ClearCursor then
@@ -493,14 +608,14 @@ local function OnItemButtonClick(button, mouseButton)
 			return
 		end
 		local quality = entry.quality
-		local canDelete = DeleteCursorItem and C_Container and C_Container.PickupContainerItem and IsAltKeyDown() and IsControlKeyDown() and entry.icon and quality ~= nil and F.NotSecret(quality) and (quality < RARE_QUALITY or quality == HEIRLOOM_QUALITY)
+		local canDelete = DeleteCursorItem and C_Container and C_Container.PickupContainerItem and IsAltKeyDown() and IsControlKeyDown() and entry.icon and quality ~= nil and (quality < RARE_QUALITY or quality == HEIRLOOM_QUALITY)
 		if canDelete then
 			if ClearCursor then
 				ClearCursor()
 			end
 			C_Container.PickupContainerItem(entry.bag, entry.slot)
 			DeleteCursorItem()
-			ns:RefreshBags(true)
+			-- BAG_UPDATE from the delete retriggers the normal dirty-bag flush.
 		elseif ClearCursor then
 			-- This click hook runs after Blizzard's default item click, which
 			-- picked the item up. Put it back unless every delete safety gate
@@ -551,13 +666,13 @@ end
 
 --- Alt-click flash-find (Bagnon flashFind): pulse every visible stack of `itemID`.
 function ItemButton:FlashFind(itemID)
-	if not itemID or F.IsSecret(itemID) then
+	if not itemID then
 		return
 	end
 	local hits = 0
 	for _, parent in pairs(slotButtons) do
 		local entry = parent.entry
-		if entry and F.NotSecret(entry.itemID) and entry.itemID == itemID and parent:IsShown() then
+		if entry and entry.itemID == itemID and parent:IsShown() then
 			hits = hits + 1
 			self:FlashButton(parent.button)
 		end
@@ -586,11 +701,21 @@ local function CreateButton()
 	-- Hidden parent: holds the bag id and is what the grid anchors.
 	local parent = CreateFrame("Button", name .. "Parent", UIParent)
 	parent:SetSize(C.Layout.ITEM_SIZE, C.Layout.ITEM_SIZE)
+	-- Blizzard's ItemButton Initialize calls GetBagID on the parent; without a
+	-- bag container stub this can nil-crash in combat (BetterBags #991).
+	parent.IsCombinedBagContainer = function()
+		return false
+	end
 
 	local button = CreateFrame("ItemButton", name, parent, "ContainerFrameItemButtonTemplate")
 	button:SetAllPoints(parent)
 	button:RegisterForDrag("LeftButton")
 	button:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+	-- Let scroll events reach the parent WowScrollBox (BetterBags item.lua).
+	button:SetScript("OnMouseWheel", nil)
+	if button.EnableMouseWheel then
+		button:EnableMouseWheel(false)
+	end
 	button:HookScript("OnClick", OnItemButtonClick)
 
 	-- Right-click deposit routing while the bank is open: queue transfers to the
@@ -684,8 +809,13 @@ end
 local function ResetButton(parent)
 	if parent.button then
 		F.TooltipThrottleLeave(parent.button)
+		if parent.button.bfFlashTimer then
+			parent.button.bfFlashTimer:Cancel()
+			parent.button.bfFlashTimer = nil
+		end
 	end
 	parent:ClearItem()
+	parent:SetScale(1) -- drop any per-view icon-size scale before the next reuse
 	parent:SetParent(UIParent)
 end
 
@@ -751,8 +881,69 @@ function ItemButton:RefreshCooldowns()
 	end
 end
 
+--- Lock flash only — Baganator LiveBagOnEvent ITEM_LOCK_CHANGED (no full Draw).
+function ItemButton:RefreshLock(bag, slot)
+	local parent = FindSlotButton(bag, slot)
+	if not (parent and parent.button) then
+		return
+	end
+	local locked = false
+	if bag and slot and C_Container.GetContainerItemInfo then
+		local info = C_Container.GetContainerItemInfo(bag, slot)
+		locked = F.SafeBool(info and info.isLocked) == true
+	end
+	if parent.entry then
+		parent.entry.isLocked = locked
+	end
+	SetItemButtonDesaturated(parent.button, locked)
+	ApplyUnusableTint(parent, parent.entry)
+end
+
+--- Quest bang / border only — UNIT_QUEST_LOG_CHANGED / QUEST_ACCEPTED.
+function ItemButton:RefreshQuests()
+	local getQuest = C_Container.GetContainerItemQuestInfo
+	if not getQuest then
+		return
+	end
+	for _, parent in pairs(slotButtons) do
+		local entry = parent.entry
+		local button = parent.button
+		if entry and button and button.UpdateQuestItem and entry.bag and entry.slot then
+			local questInfo = getQuest(entry.bag, entry.slot)
+			local quest = questInfo and F.SafeBool(questInfo.isQuestItem)
+			entry.quest = quest and true or false
+			entry.questID = questInfo and F.SafeNumber(questInfo.questID) or nil
+			local active = questInfo and F.SafeBool(questInfo.isActive)
+			entry.isActiveQuest = active and true or false
+			button:UpdateQuestItem(entry.quest, entry.questID, entry.isActiveQuest)
+			if parent._paintSnap then
+				parent._paintSnap.quest = entry.quest
+				parent._paintSnap.questID = entry.questID
+				parent._paintSnap.isActiveQuest = entry.isActiveQuest
+			end
+		end
+	end
+end
+
+--- Refresh Blizzard deposit/search context overlay (bank open/close / tab switch).
+function ItemButton:RefreshWarbandDim()
+	for _, parent in pairs(slotButtons) do
+		local button = parent.button
+		if button and button.UpdateItemContextMatching then
+			button:UpdateItemContextMatching()
+		end
+	end
+end
+
 function ItemButton:OnEnable()
-	self.pool = F.CreatePool(CreateButton, ResetButton)
+	if self._hooksInstalled then
+		return
+	end
+	self._hooksInstalled = true
+	self._eventHandles = self._eventHandles or {}
+	local handles = self._eventHandles
+
+	self.pool = self.pool or F.CreatePool(CreateButton, ResetButton)
 
 	-- Pre-warm out of combat (OnEnable runs at PLAYER_LOGIN). Size from the
 	-- player's real slot counts so backpack + bank open won't exhaust the pool.
@@ -760,15 +951,33 @@ function ItemButton:OnEnable()
 	self.pool:Prewarm(prewarm)
 	self:ApplyOverlayLayout()
 
-	F.BucketEvent("BAG_UPDATE_COOLDOWN", 0.2, function()
+	local cooldownHandle = F.BucketEvent("BAG_UPDATE_COOLDOWN", 0.2, function()
 		local items = ns:GetModule("Items")
 		if items and items.AnyWindowOpen and not items:AnyWindowOpen() then
 			return
 		end
 		ItemButton:RefreshCooldowns()
 	end)
+	if cooldownHandle then
+		handles[#handles + 1] = { "BAG_UPDATE_COOLDOWN", cooldownHandle }
+	end
 
-	ns:RegisterEvent("PLAYER_REGEN_ENABLED", function()
+	-- Narrow paints — never full Items:Flush / Draw (Baganator Layouts LiveBagOnEvent).
+	ns:TrackEvent(handles, "ITEM_LOCK_CHANGED", function(_, bag, slot)
+		if bag and slot then
+			ItemButton:RefreshLock(bag, slot)
+		end
+	end)
+	ns:TrackEvent(handles, "UNIT_QUEST_LOG_CHANGED", function(_, unit)
+		if unit == "player" then
+			ItemButton:RefreshQuests()
+		end
+	end)
+	ns:TrackEvent(handles, "QUEST_ACCEPTED", function()
+		ItemButton:RefreshQuests()
+	end)
+
+	ns:TrackEvent(handles, "PLAYER_REGEN_ENABLED", function()
 		if not combatLayoutPending then
 			return
 		end
@@ -808,6 +1017,24 @@ function ItemButton:OnEnable()
 	end
 end
 
+function ItemButton:OnDisable()
+	if not self._hooksInstalled then
+		return
+	end
+	self._hooksInstalled = false
+	self:UninstallDeleteClickHook()
+	local organize = ns:GetModule("Organize")
+	if organize and organize.SetMode and organize.mode then
+		organize:SetMode(nil)
+	end
+	ns:UnregisterModuleEventHandles(self._eventHandles)
+	if EventRegistry and EventRegistry.UnregisterCallback then
+		EventRegistry:UnregisterCallback("BagSlot.OnEnter", self)
+		EventRegistry:UnregisterCallback("BagSlot.OnLeave", self)
+	end
+	combatLayoutPending = false
+end
+
 function ItemButton:Acquire()
 	local pool = self.pool
 	if not pool then
@@ -830,7 +1057,9 @@ end
 --- draw from this one shared pool without stomping each other - a global
 --- ReleaseAll would yank the other window's buttons out from under it.
 function ItemButton:Release(button)
-	self.pool:Release(button)
+	if self.pool and button then
+		self.pool:Release(button)
+	end
 end
 
 function ItemButton:GetSlotButton(bag, slot)
@@ -838,30 +1067,44 @@ function ItemButton:GetSlotButton(bag, slot)
 end
 
 function ItemButton:RefreshItemID(itemID)
-	if not (itemID and F.NotSecret(itemID)) then
+	if not itemID then
 		return
 	end
 	for _, parent in pairs(slotButtons) do
 		local entry = parent.entry
-		if entry and F.NotSecret(entry.itemID) and entry.itemID == itemID then
+		if entry and entry.itemID == itemID then
 			parent:SetItemEntry(entry)
 		end
 	end
 end
 
+FindSlotButton = function(bag, slot)
+	local button = ItemButton:GetSlotButton(bag, slot)
+	if button then
+		return button
+	end
+	for _, parent in pairs(slotButtons) do
+		local entry = parent.entry
+		local merged = entry and entry._mergedSlots
+		if merged then
+			for i = 1, #merged do
+				local m = merged[i]
+				if m.bag == bag and m.slot == slot then
+					return parent
+				end
+			end
+		end
+	end
+	return nil
+end
+
 function ItemButton:RefreshSlot(bag, slot)
-	local button = self:GetSlotButton(bag, slot)
-	local entry = button and button.entry
-	if not entry then
+	local button = FindSlotButton(bag, slot)
+	if not (button and button.entry) then
 		return false
 	end
+	local entry = button.entry
 
-	local info = C_Container.GetContainerItemInfo(bag, slot)
-	if not (info and info.itemID and F.NotSecret(info.itemID)) then
-		return false
-	end
-
-	entry.isLocked = info.isLocked and true or false
 	button:SetItemEntry(entry)
 	if button.button and F.RefreshBagItemTooltipIfHovered then
 		F.RefreshBagItemTooltipIfHovered(button.button)
@@ -870,7 +1113,9 @@ function ItemButton:RefreshSlot(bag, slot)
 end
 
 function ItemButton:ReleaseAll()
-	self.pool:ReleaseAll()
+	if self.pool then
+		self.pool:ReleaseAll()
+	end
 end
 
 local CORNER_ANCHORS = {

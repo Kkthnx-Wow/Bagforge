@@ -2,7 +2,7 @@
 ## Title: |cfff5c072Bag|r|cfffd9b20forge|r
 ## Notes: A lightweight, modern bag replacement forged for Midnight.|n|n|cff5C8BCFDeveloper|cffffffff:|r |nJosh "|CFF7b8489Kkthnx|r" Russell|n|n|cff009cdePayPal|r|cffffffff:|r |n|cffffffffwww.paypal.me/KkthnxTV|r|n|n|cfff96854Patreon|r|cffffffff:|r |n|cffffffffwww.patreon.com/Kkthnx|r
 ## Author: Josh "|CFF7b8489Kkthnx|r" Russell
-## Version: 1.2.2
+## Version: 1.5.2
 ## SavedVariables: BagforgeDB
 ## SavedVariablesPerCharacter: BagforgeCharDB
 ## IconTexture: Interface\Addons\Bagforge\assets\Icon64.blp
@@ -32,8 +32,10 @@ Core\Constants.lua
 Core\Functions.lua
 Core\TooltipGuards.lua
 Core\Database.lua
+Core\ItemLoader.lua
 Core\Scan.lua
 Core\Search.lua
+Core\CombineStacks.lua
 
 # Localization (English is the fallback and must load first).
 Core\Locales\enUS.lua
@@ -69,6 +71,7 @@ Modules\Backpack.lua
 Modules\Bank.lua
 
 # Conveniences layered on top of the bag views.
+Modules\SavedSearches.lua
 Modules\Transfers.lua
 Modules\Vendor.lua
 Modules\DeleteCheapest.lua
@@ -78,3 +81,5 @@ Modules\Plugins.lua
 
 # Optional third-party integrations (enable themselves only when present).
 Modules\Pawn.lua
+Modules\CanIMogIt.lua
+Modules\JunkPlugins.lua

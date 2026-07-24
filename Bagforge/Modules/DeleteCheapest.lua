@@ -18,17 +18,12 @@
 	other chrome icons; this module owns the scan, the confirm dialog and the
 	options page, and Backpack calls back into Report()/Prompt() on click.
 
-	Midnight note: vendor sell price comes from C_Item.GetItemInfo (static item
-	data, never Secret), but a bag slot's stack count and item link can be
-	Secret in combat/instances, so we gate those reads with F.IsSecret and fall
-	back to treating a slot as a single item rather than doing arithmetic on a
-	Secret.
+	Vendor sell price and container item fields are plain values in the 12.0.7 API docs.
 --]]
 
 local _, ns = ...
 local C, F, L = ns.C, ns.F, ns.L
 
-local select = select
 local ipairs = ipairs
 local format = string.format
 
@@ -36,7 +31,6 @@ local C_Container = C_Container
 local C_Container_GetContainerNumSlots = C_Container.GetContainerNumSlots
 local C_Container_GetContainerItemInfo = C_Container.GetContainerItemInfo
 local C_Container_PickupContainerItem = C_Container.PickupContainerItem
-local C_Item_GetItemInfo = C_Item.GetItemInfo
 local ClearCursor = ClearCursor
 local DeleteCursorItem = DeleteCursorItem
 local InCombatLockdown = InCombatLockdown
@@ -77,9 +71,9 @@ DeleteCheapest.group = "extras"
 -- ---------------------------------------------------------------------------
 -- True when the item's class is excluded by the user's protection filters.
 local function IsFiltered(link)
-	local classID = select(12, C_Item_GetItemInfo(link))
-	-- classID can be Secret inside instances; never index the table with it.
-	if not classID or F.IsSecret(classID) then
+	local info = F.GetItemInfoRecord(link)
+	local classID = info and info.classID
+	if not classID then
 		return false
 	end
 	local key = FILTER_KEYS[classID]
@@ -95,18 +89,13 @@ local function FindCheapest()
 		local numSlots = C_Container_GetContainerNumSlots(bag) or 0
 		for slot = 1, numSlots do
 			local info = C_Container_GetContainerItemInfo(bag, slot)
-			if info and not info.hasNoValue and info.hyperlink and F.NotSecret(info.hyperlink) and info.itemID and F.NotSecret(info.itemID) then
+			if info and not info.hasNoValue and info.hyperlink and info.itemID then
 				local sellPrice = ns.Scan and ns.Scan.GetSellPrice and ns.Scan.GetSellPrice(info.itemID, info.hyperlink)
-				-- sellPrice is static item data (not Secret); guard anyway.
-				if sellPrice and F.NotSecret(sellPrice) and sellPrice > 0 and not IsFiltered(info.hyperlink) then
-					-- Stack count can be Secret in combat; only multiply when
-					-- it is a plain number, otherwise price the single item.
-					local count = info.stackCount
+				if sellPrice and sellPrice > 0 and not IsFiltered(info.hyperlink) then
+					local count = info.stackCount or 1
 					local total = sellPrice
-					if count and F.NotSecret(count) and count > 1 then
+					if count > 1 then
 						total = sellPrice * count
-					else
-						count = 1
 					end
 
 					if not bestValue or total < bestValue then
@@ -156,9 +145,9 @@ if StaticPopupDialogs then
 			end
 			-- Re-verify the slot still holds the same item before destroying it,
 			-- so a bag shuffle between prompt and confirm can't delete the wrong
-			-- thing. Compare bag/slot only; hyperlinks may be Secret in instances.
+			-- thing.
 			local info = C_Container_GetContainerItemInfo(data.bag, data.slot)
-			if not info or not info.itemID or not F.NotSecret(info.itemID) or info.itemID ~= data.itemID then
+			if not info or not info.itemID or info.itemID ~= data.itemID then
 				F.Print(L["The item moved before it could be deleted - nothing was destroyed."])
 				return
 			end
@@ -172,7 +161,7 @@ if StaticPopupDialogs then
 			else
 				F.Print(format(L["Deleted %s, worth %s."], data.link, F.FormatMoney(data.value)))
 			end
-			ns:RefreshBags(true)
+			-- BAG_UPDATE from the delete retriggers the normal dirty-bag flush.
 		end,
 		timeout = 0,
 		whileDead = 1,
@@ -188,7 +177,7 @@ function DeleteCheapest:Prompt()
 		return
 	end
 	local link, value, count, bag, slot, itemID = FindCheapest()
-	if not (link and bag and slot and itemID and F.NotSecret(itemID)) then
+	if not (link and bag and slot and itemID) then
 		F.Print(L["No sellable items were found in your bags."])
 		return
 	end

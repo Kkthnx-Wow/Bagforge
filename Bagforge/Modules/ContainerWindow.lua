@@ -12,7 +12,6 @@ local C, F = ns.C, ns.F
 
 local CreateFrame = CreateFrame
 local InCombatLockdown = InCombatLockdown
-local ipairs = ipairs
 local max = math.max
 local pairs = pairs
 local wipe = wipe
@@ -38,7 +37,10 @@ function ContainerWindow.Apply(target)
 	target.CreateSearchBox = ContainerWindow.CreateSearchBox
 	target.SetSearchReserve = ContainerWindow.SetSearchReserve
 	target.CheckCombatDraw = ContainerWindow.CheckCombatDraw
+	target.EnsureShellSize = ContainerWindow.EnsureShellSize
 	target.DrawCategorized = ContainerWindow.DrawCategorized
+	target.PatchChangedEntries = ContainerWindow.PatchChangedEntries
+	target.RefreshCategoryHeaders = ContainerWindow.RefreshCategoryHeaders
 	target.FindMainSection = ContainerWindow.FindMainSection
 end
 
@@ -56,7 +58,7 @@ function ContainerWindow.GetChromeInsets()
 	local leftX = L.PANEL_PADDING_X + L.PANEL_BIAS_X
 	local rightX = L.PANEL_PADDING_X - L.PANEL_BIAS_X
 	local btnW = 20
-	local btnGap = 4
+	local btnGap = 3
 	local searchY = ContainerWindow.GetChromeSearchY()
 	-- Bottom-align 20px icon buttons with the 24px search box; MAIN_CHROME_BTN_OFFSET nudges up.
 	local btnY = searchY - L.MAIN_CHROME_ROW_HEIGHT + btnW + (L.MAIN_CHROME_BTN_OFFSET or 0)
@@ -129,16 +131,84 @@ end
 
 function ContainerWindow:InvalidateItemLayouts()
 	if self.mainContainer then
-		self.mainContainer._sig = nil
-		self.mainContainer._lastW = nil
-		self.mainContainer._lastH = nil
+		if self.mainContainer.AbortLayout then
+			self.mainContainer:AbortLayout()
+		else
+			self.mainContainer._structSig = nil
+			self.mainContainer._paintSig = nil
+			self.mainContainer._sig = nil
+			self.mainContainer._lastW = nil
+			self.mainContainer._lastH = nil
+		end
 	end
 	local containers = self.categoryContainers
 	if containers then
 		for _, container in pairs(containers) do
-			container._sig = nil
-			container._lastW = nil
-			container._lastH = nil
+			if container.AbortLayout then
+				container:AbortLayout()
+			else
+				container._structSig = nil
+				container._paintSig = nil
+				container._sig = nil
+				container._lastW = nil
+				container._lastH = nil
+			end
+		end
+	end
+end
+
+function ContainerWindow:PatchChangedEntries(changeset, opts)
+	if not (changeset and changeset.updated) then
+		return
+	end
+	local categories = ns:GetModule("Categories")
+	local mainName = opts.mainName
+	local mainTitle = opts.mainTitle
+	local updated = changeset.updated
+	for i = 1, #updated do
+		local entry = updated[i]
+		local container
+		if entry.category == mainName or entry.category == mainTitle or (categories and categories:IsMainPanel(entry.category)) then
+			container = self.mainContainer
+		elseif self.categoryContainers then
+			container = self.categoryContainers[entry.category]
+		end
+		if container and container.PatchEntry then
+			container:PatchEntry(entry)
+		end
+	end
+end
+
+function ContainerWindow:RefreshCategoryHeaders(opts)
+	opts = opts or {}
+	local changeset = opts.changeset
+	local dirty = changeset and changeset.dirtyCategories
+	if not (dirty and next(dirty)) then
+		return
+	end
+	local sections = opts.drawSections or opts.sections
+	if not sections then
+		return
+	end
+	local categories = ns:GetModule("Categories")
+	local mainName = opts.mainName or (categories and categories:GetMainCategory())
+	local mainTitle = opts.mainTitle
+	for i = 1, #sections do
+		local section = sections[i]
+		if dirty[section.name] then
+			local container
+			if section.name == mainName or section.name == mainTitle or (categories and categories:IsMainPanel(section.name)) then
+				container = self.mainContainer
+			elseif self.categoryContainers then
+				container = self.categoryContainers[section.name]
+			end
+			if container and container.RefreshHeader then
+				local headerOpts
+				if container == self.mainContainer and mainTitle then
+					headerOpts = { showMainTitle = true }
+				end
+				container:RefreshHeader(section, headerOpts)
+			end
 		end
 	end
 end
@@ -205,6 +275,11 @@ function ContainerWindow:CreateSearchBox(rightButtonCount)
 	if search.Instructions then
 		search.Instructions:SetWordWrap(false)
 	end
+	-- Right-click opens the saved-search preset menu (module wires the hook).
+	local savedSearches = ns:GetModule("SavedSearches")
+	if savedSearches and savedSearches.Attach then
+		savedSearches:Attach(search)
+	end
 	return search
 end
 
@@ -230,6 +305,23 @@ function ContainerWindow:CheckCombatDraw()
 	end
 	self.pendingDraw = false
 	return false
+end
+
+--- First open / combat: SettingsFrameTemplate starts at 0x0 until Layout.
+--- Size the main panel to one empty grid row so Show() is visible while
+--- pendingDraw waits for PLAYER_REGEN_ENABLED (BetterBags also defers bag
+--- work in combat and flushes on regen — Events.lua PLAYER_REGEN_ENABLED).
+function ContainerWindow:EnsureShellSize(columns)
+	local main = self.mainContainer
+	if not (main and main.frame) or main._lastW then
+		return
+	end
+	columns = columns or C.Layout.COLUMNS
+	local L = C.Layout
+	local iconSize = (self.GetIconSize and self:GetIconSize()) or L.ITEM_SIZE
+	local gridW = ns.Container.GridWidth(columns, iconSize)
+	local height = L.PANEL_PADDING * 2 + L.PANEL_HEADER_HEIGHT + (L.MAIN_CHROME_TOP or 0) + (L.MAIN_CHROME_BOTTOM or 0) + iconSize
+	main.frame:SetSize(gridW, height)
 end
 
 function ContainerWindow:FindMainSection(sections, mainName, categories)
@@ -262,9 +354,40 @@ function ContainerWindow:DrawCategorized(opts)
 		return
 	end
 
+	local changeset = opts.changeset
+
+	if changeset and changeset.incremental and not changeset.structureChanged and changeset.updated and #changeset.updated > 0 then
+		local categories = ns:GetModule("Categories")
+		local cols = opts.columns or C.Layout.COLUMNS
+		local iconSize = (self.GetIconSize and self:GetIconSize()) or C.Layout.ITEM_SIZE
+		local gridW = opts.gridWidth or ns.Container.GridWidth(cols, iconSize)
+		if opts.beforeLayout then
+			opts.beforeLayout(cols, gridW)
+		end
+		local mainName = opts.mainName or (categories and categories:GetMainCategory())
+		ContainerWindow.PatchChangedEntries(self, changeset, {
+			mainName = mainName,
+			mainTitle = opts.mainTitle,
+		})
+		ContainerWindow.RefreshCategoryHeaders(self, {
+			changeset = changeset,
+			sections = opts.drawSections or opts.sections,
+			mainName = mainName,
+			mainTitle = opts.mainTitle,
+		})
+		if opts.afterLayout then
+			opts.afterLayout()
+		end
+		return
+	end
+
+	self._layoutGen = (self._layoutGen or 0) + 1
+
 	local categories = ns:GetModule("Categories")
 	local cols = opts.columns or C.Layout.COLUMNS
-	local gridW = opts.gridWidth or ns.Container.GridWidth(cols)
+	local iconSize = (self.GetIconSize and self:GetIconSize()) or C.Layout.ITEM_SIZE
+	local gridW = opts.gridWidth or ns.Container.GridWidth(cols, iconSize)
+	self.mainContainer.iconSize = iconSize
 	local sections = opts.drawSections or opts.sections
 	local mainName = opts.mainName or (categories and categories:GetMainCategory())
 	-- Each window passes its own perColumn (backpack and bank track it separately);
@@ -298,7 +421,22 @@ function ContainerWindow:DrawCategorized(opts)
 	if opts.layoutBatchSize then
 		layoutOpts.layoutBatchSize = opts.layoutBatchSize
 	end
-	self.mainContainer:Layout(layoutSection, cols, layoutOpts)
+	local mainCat = mainSection and mainSection.name or mainName
+	local dirtyCategories = changeset and changeset.dirtyCategories
+	-- Stack merge finalize can collapse piles in categories that were not in the
+	-- slot diff; narrow layout to dirty categories for in-place add/remove patches.
+	if dirtyCategories and changeset and changeset.needsFinalize then
+		local stackMerge = ns.db and ns.db.organize and ns.db.organize.stackMerge
+		if stackMerge and not changeset.structureChanged and #changeset.added == 0 and #changeset.removed == 0 then
+			dirtyCategories = nil
+		end
+	end
+	local layoutMain = not dirtyCategories or not next(dirtyCategories) or dirtyCategories[mainCat]
+	if layoutMain or not self.mainContainer._lastW then
+		self.mainContainer:Layout(layoutSection, cols, layoutOpts)
+	elseif self.mainContainer.frame then
+		self.mainContainer.frame:Show()
+	end
 
 	ns.Container.StackCategories({
 		sections = sections,
@@ -309,8 +447,10 @@ function ContainerWindow:DrawCategorized(opts)
 		perColumn = perColumn,
 		freeSlots = opts.freeSlots,
 		layoutBatchSize = opts.layoutBatchSize,
+		dirtyCategories = dirtyCategories,
 		owner = self,
 		active = active,
+		iconSize = iconSize,
 	})
 
 	self:HideInactiveCategoryContainers()

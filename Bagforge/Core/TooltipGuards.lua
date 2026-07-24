@@ -1,13 +1,10 @@
 --[[
 	Bagforge - Tooltip guards
 	-------------------------------------------------------------------------
-	Blizzard's default sell-price tooltip line routes through MoneyFrame, which
-	can taint (and error on secret coin values in combat). BagBrother/Bagnon
-	replace that line with plain GetMoneyString text via TooltipDataProcessor.
+	Blizzard's default sell-price tooltip line routes through MoneyFrame.
+	BagBrother/Bagnon replace that line with plain GetMoneyString text via TooltipDataProcessor.
+	(WoWUIBugs #838 — MoneyFrame still used in default tooltip sell-price path.)
 --]]
-
-local _, ns = ...
-local F = ns.F
 
 local format = string.format
 local TooltipDataProcessor = TooltipDataProcessor
@@ -26,10 +23,7 @@ TooltipDataProcessor.AddLinePreCall(Enum.TooltipDataLineType.SellPrice, function
 	if not data or not data.price or tip.isShopping then
 		return
 	end
-	if F.IsSecret(data.price) or (data.maxPrice and F.IsSecret(data.maxPrice)) then
-		return true
-	end
-	if data.maxPrice and F.NotSecret(data.maxPrice) and data.maxPrice >= 1 then
+	if data.maxPrice and data.maxPrice >= 1 then
 		tip:AddLine(format("%s:", SELL_PRICE), 1, 1, 1, true)
 		tip:AddLine(format("    %s: %s", MINIMUM, GetMoneyString(data.price, true)), 1, 1, 1, true)
 		tip:AddLine(format("    %s: %s", MAXIMUM, GetMoneyString(data.maxPrice, true)), 1, 1, 1, true)

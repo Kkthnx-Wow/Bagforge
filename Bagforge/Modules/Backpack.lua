@@ -14,7 +14,6 @@ local CreateFrame = CreateFrame
 local C_AddOns = C_AddOns
 local C_CurrencyInfo = C_CurrencyInfo
 local C_Container = C_Container
-local ipairs = ipairs
 local pairs = pairs
 local wipe = wipe
 local tonumber = tonumber
@@ -28,8 +27,6 @@ local format = string.format
 local PlaySound = PlaySound
 local GameTooltip = GameTooltip
 local UIParent = UIParent
-local InCombatLockdown = InCombatLockdown
-local GetMoney = GetMoney
 local IsAltKeyDown = IsAltKeyDown
 local IsControlKeyDown = IsControlKeyDown
 local StaticPopup_Show = StaticPopup_Show
@@ -43,7 +40,6 @@ local BAG_CLEANUP_BAGS_DESCRIPTION = _G["BAG_CLEANUP_BAGS_DESCRIPTION"]
 local CLOSE = _G["CLOSE"]
 local UnitName = UnitName
 local MoneyFrame_SetType = _G["MoneyFrame_SetType"]
-local MoneyFrame_UpdateMoney = _G["MoneyFrame_UpdateMoney"]
 
 local BagIndex = Enum.BagIndex
 local TOKEN_UI = "Blizzard_TokenUI"
@@ -58,19 +54,19 @@ local CURRENCY_TOKEN_GAP = 18
 local CURRENCY_BAR_PAD_LEFT = 0
 local CURRENCY_BAR_PAD_RIGHT = 0
 
--- Character-create arrow atlases (same family KkthnxUI-style toolbar toggle).
-local ATLAS_TOOLBAR_EXPAND = "charactercreate-customize-nextbutton"
-local ATLAS_TOOLBAR_EXPAND_DOWN = "charactercreate-customize-nextbutton-down"
-local ATLAS_TOOLBAR_COLLAPSE = "charactercreate-customize-backbutton"
-local ATLAS_TOOLBAR_COLLAPSE_DOWN = "charactercreate-customize-backbutton-down"
+-- Character-create arrow textures (same family KkthnxUI-style toolbar toggle).
+local TEXTURE_TOOLBAR_EXPAND = "Interface\\BUTTONS\\UI-SpellbookIcon-NextPage-Up"
+local TEXTURE_TOOLBAR_EXPAND_DOWN = "Interface\\BUTTONS\\UI-SpellbookIcon-NextPage-Down"
+local TEXTURE_TOOLBAR_COLLAPSE = "Interface\\BUTTONS\\UI-SpellbookIcon-PrevPage-Up"
+local TEXTURE_TOOLBAR_COLLAPSE_DOWN = "Interface\\BUTTONS\\UI-SpellbookIcon-PrevPage-Down"
 local TOOLBAR_TOGGLE_SIZE = 30
 
 local function SetToolbarToggleArt(btn, expanded)
-	local normal = expanded and ATLAS_TOOLBAR_COLLAPSE or ATLAS_TOOLBAR_EXPAND
-	local pushed = expanded and ATLAS_TOOLBAR_COLLAPSE_DOWN or ATLAS_TOOLBAR_EXPAND_DOWN
-	if btn.SetNormalAtlas then
-		btn:SetNormalAtlas(normal)
-		btn:SetPushedAtlas(pushed)
+	local normal = expanded and TEXTURE_TOOLBAR_COLLAPSE or TEXTURE_TOOLBAR_EXPAND
+	local pushed = expanded and TEXTURE_TOOLBAR_COLLAPSE_DOWN or TEXTURE_TOOLBAR_EXPAND_DOWN
+	if btn.SetNormalTexture then
+		btn:SetNormalTexture(normal)
+		btn:SetPushedTexture(pushed)
 	end
 end
 
@@ -96,12 +92,20 @@ end
 
 ns:RegisterDefaults({
 	backpack = {
-		columns = 12,
+		columns = C.Layout.COLUMNS,
+		iconSize = C.Layout.ITEM_SIZE,
 		showBagBar = false,
-		categoriesPerColumn = C.Layout.DEFAULT_CATEGORIES_PER_COLUMN,
+		categoriesPerColumn = C.Layout.BACKPACK_CATEGORIES_PER_COLUMN,
 		flashFind = true,
 		showJunkPrice = true,
 		toolbarExpanded = false,
+		-- Auto-open matrix (Baganator OpenClose.lua + PLAYER_INTERACTION_MANAGER).
+		openOnTrade = false,
+		openOnMerchant = false,
+		openOnMail = false,
+		openOnAuction = false,
+		openOnScrapping = false,
+		specialBagColors = true,
 	},
 })
 
@@ -147,6 +151,9 @@ function Backpack:BuildChrome()
 	local sort = F.CreateIconButton(frame, btnW, btnW, 655994)
 	sort:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -rightX, rowY)
 	sort:SetScript("OnClick", function()
+		if ns:IsBagSortActive() then
+			return
+		end
 		PlaySound(SOUNDKIT.UI_BAG_SORTING_01)
 		local items = ns:GetModule("Items")
 		if items then
@@ -162,7 +169,18 @@ function Backpack:BuildChrome()
 	sort:SetScript("OnLeave", GameTooltip_Hide)
 	self.sortButton = sort
 
-	local bagToggle = F.CreateIconButton(frame, btnW, btnW, "hud-backpack")
+	local function UpdateSortButton()
+		local btn = Backpack.sortButton
+		if not btn then
+			return
+		end
+		local enabled = not ns:IsBagSortActive()
+		btn:SetEnabled(enabled)
+		btn:SetAlpha(enabled and 1 or 0.4)
+	end
+	Backpack.UpdateSortButton = UpdateSortButton
+
+	local bagToggle = F.CreateIconButton(frame, btnW, btnW, 133633)
 	bagToggle:SetPoint("RIGHT", sort, "LEFT", -btnGap, 0)
 	bagToggle:SetScript("OnClick", function()
 		Backpack:ToggleBagBar()
@@ -279,7 +297,7 @@ function Backpack:BuildChrome()
 	-- module; this is just the chrome icon. The dead-goblin-head icon reads as
 	-- "purge the hoard"; trim the icon ring so it sits like the other flat
 	-- chrome icons.
-	local deleteCheapest = F.CreateIconButton(frame, btnW, btnW, [[Interface\ICONS\achievement_Goblinheaddead]])
+	local deleteCheapest = F.CreateIconButton(frame, btnW, btnW, 901746)
 	deleteCheapest:SetPoint("RIGHT", delete, "LEFT", -btnGap, 0)
 	deleteCheapest:RegisterForClicks("LeftButtonUp", "RightButtonUp")
 	deleteCheapest:SetScript("OnClick", function(_, mouseButton)
@@ -312,7 +330,7 @@ function Backpack:BuildChrome()
 
 	self.toolbarExtraButtons = { assign, junk, delete, deleteCheapest }
 
-	local toggle = F.CreateIconButton(frame, TOOLBAR_TOGGLE_SIZE, TOOLBAR_TOGGLE_SIZE, ATLAS_TOOLBAR_EXPAND, ATLAS_TOOLBAR_EXPAND_DOWN)
+	local toggle = F.CreateIconButton(frame, TOOLBAR_TOGGLE_SIZE, TOOLBAR_TOGGLE_SIZE, TEXTURE_TOOLBAR_EXPAND, TEXTURE_TOOLBAR_EXPAND_DOWN)
 	F.SetIconButtonHighlightSize(toggle, btnW)
 	toggle:SetPoint("RIGHT", bagToggle, "LEFT", -btnGap, 0)
 	toggle:SetScript("OnEnter", function(btn)
@@ -380,6 +398,11 @@ function Backpack:BuildChrome()
 	end
 
 	self:BuildBagBar()
+end
+
+--- The backpack's item icon size (per-view; falls back to the shared default).
+function Backpack:GetIconSize()
+	return (ns.db and ns.db.backpack and ns.db.backpack.iconSize) or C.Layout.ITEM_SIZE
 end
 
 --- How many icon buttons sit on the search row (sort + bag + toggle + optional extras).
@@ -485,6 +508,10 @@ function Backpack:UpdateCurrencyBar(gridWidth)
 		return false
 	end
 
+	-- CURRENCY_DISPLAY_UPDATE fires this with no width; recompute it from the
+	-- column count (the same source Draw uses) so we never do arithmetic on nil.
+	gridWidth = gridWidth or ns.Container.GridWidth(ns.db.backpack.columns or C.Layout.COLUMNS, self:GetIconSize())
+
 	local leftX = C.Layout.PANEL_PADDING_X + C.Layout.PANEL_BIAS_X
 	local rightX = C.Layout.PANEL_PADDING_X - C.Layout.PANEL_BIAS_X
 	local footerGap = C.Layout.FOOTER_GAP
@@ -535,28 +562,19 @@ function Backpack:UpdateCurrencyBar(gridWidth)
 end
 
 function Backpack:CanUpdateMoneyFrame()
-	if InCombatLockdown() then
-		return false
-	end
-	if GetMoney and F.IsSecret(GetMoney()) then
-		return false
-	end
-	return true
+	return F.CanUpdatePlayerMoney()
 end
 
 function Backpack:UpdateMoneyFrame()
 	local money = self.moneyFrame
-	if not money or not MoneyFrame_UpdateMoney then
+	if not money then
 		return
 	end
-	if not self:CanUpdateMoneyFrame() then
+	if F.UpdatePlayerMoneyFrame(money) then
+		self.moneyPending = false
+	else
 		self.moneyPending = true
-		money:Hide()
-		return
 	end
-	self.moneyPending = false
-	money:Show()
-	MoneyFrame_UpdateMoney(money)
 end
 
 function Backpack:LayoutFooter(gridWidth)
@@ -575,6 +593,10 @@ function Backpack:LayoutFooter(gridWidth)
 end
 
 function Backpack:BuildWindow()
+	-- Re-enable must not spawn a second main frame / UISpecialFrames entry.
+	if self.frame then
+		return
+	end
 	self:InitCategoryContainers()
 	self.mainContainer = ns.Container.NewMain(UIParent)
 	self.mainContainer:SetFreeSlotDeposit(function()
@@ -601,7 +623,34 @@ function Backpack:GetMainTitle()
 	return format(L["%s Bags"], name)
 end
 
-function Backpack:Draw()
+function Backpack:RefreshCategoryHeaders()
+	if not self:IsShown() then
+		return
+	end
+	local items = ns:GetModule("Items")
+	local categories = ns:GetModule("Categories")
+	if not (items and categories and items.scanner) then
+		return
+	end
+	local changeset = items.scanner.lastChangeset
+	if not changeset then
+		return
+	end
+	local sections = items:GetSections()
+	local drawSections = sections
+	if REAGENT_BAG_BAGS and categories.HasReagentBag and categories:HasReagentBag() then
+		drawSections = select(1, self:BuildReagentDraw(sections, categories))
+	end
+	ns.ContainerWindow.RefreshCategoryHeaders(self, {
+		changeset = changeset,
+		sections = drawSections,
+		drawSections = drawSections,
+		mainName = categories:GetMainCategory(),
+		mainTitle = self:GetMainTitle(),
+	})
+end
+
+function Backpack:Draw(changeset)
 	if not self.frame then
 		return
 	end
@@ -612,9 +661,13 @@ function Backpack:Draw()
 		return
 	end
 
+	if not changeset and items.scanner then
+		changeset = items.scanner.lastChangeset
+	end
+
 	local sections = items:GetSections()
 	local cols = ns.db.backpack.columns or C.Layout.COLUMNS
-	local gridW = ns.Container.GridWidth(cols)
+	local gridW = ns.Container.GridWidth(cols, self:GetIconSize())
 	self:LayoutFooter(gridW)
 	local bottomInset = C.Layout.MAIN_CHROME_BOTTOM
 
@@ -640,7 +693,7 @@ function Backpack:Draw()
 		mainTitle = self:GetMainTitle(),
 		columns = cols,
 		gridWidth = gridW,
-		perColumn = ns.db.backpack.categoriesPerColumn,
+		perColumn = ns.db.backpack.categoriesPerColumn or C.Layout.BACKPACK_CATEGORIES_PER_COLUMN,
 		freeSlots = freeSlots,
 		layoutBatchSize = C.Layout.BACKPACK_LAYOUT_BATCH,
 		mainLayoutOpts = {
@@ -655,6 +708,7 @@ function Backpack:Draw()
 				bank:RefreshItemContext()
 			end
 		end,
+		changeset = changeset,
 	})
 end
 
@@ -718,18 +772,33 @@ function Backpack:BuildReagentDraw(sections, categories)
 	return drawSections, freeSlots
 end
 
-function Backpack:Open()
+function Backpack:Open(fromAuto)
 	if not self.frame then
 		return
 	end
+	-- Manual open (keybind / bag button) clears autoOpened so interaction HIDE
+	-- won't close bags the player opened on purpose (Baganator OpenClose.lua).
+	if not fromAuto then
+		self._autoOpened = false
+	end
+	-- Shell size before Show so combat (CheckCombatDraw) never leaves a 0x0 window.
+	self:EnsureShellSize(ns.db.backpack.columns or C.Layout.COLUMNS)
 	self.frame:Show()
 	-- Match Blizzard's ContainerFrame open/close sounds (IG_BACKPACK_*).
 	if SOUNDKIT then
 		PlaySound(SOUNDKIT.IG_BACKPACK_OPEN)
 	end
 	local items = ns:GetModule("Items")
-	if items and items._scanDirty then
+	-- Fresh login: bags often open while `_scanDirty` (updates while closed) or
+	-- before the first model build. Scan() is sync; Draw() must run here — not
+	-- wait on debounced Items.Updated (that left a 0x0 frame with only sound).
+	-- Empty bags still have `_hasScanned`; do not treat #slots==0 as "never scanned".
+	local needScan = items and (items._scanDirty or not items._hasScanned)
+	if needScan then
 		items:Scan()
+	elseif items and items.scanner and items.scanner.RefreshFiltered then
+		-- Search may have changed while closed; sync isFiltered before paint.
+		items.scanner:RefreshFiltered()
 	end
 	self:UpdateMoneyFrame()
 	self:ApplyBagBarState()
@@ -737,6 +806,7 @@ function Backpack:Open()
 end
 
 function Backpack:Close()
+	self._autoOpened = false
 	if self.frame then
 		-- Only chime if we were actually open, so a redundant Close() stays silent.
 		local wasShown = self.frame:IsShown()
@@ -754,12 +824,16 @@ function Backpack:Close()
 			container:Reset()
 		end
 	end
+	if self.mainContainer and self.mainContainer.AbortLayout then
+		self.mainContainer:AbortLayout()
+	end
 end
 
 function Backpack:Toggle()
 	if self.frame and self.frame:IsShown() then
 		self:Close()
 	else
+		self._autoOpened = false
 		self:Open()
 	end
 end
@@ -796,50 +870,94 @@ function Backpack:SetColumns(columns)
 end
 
 function Backpack:OnSettingChanged(key)
-	if self.frame then
-		self:ApplyBagBarState()
-	end
 	if key == "showJunkPrice" then
-		ns:RefreshBags(false)
-	elseif self.frame then
-		self:Draw()
+		ns:UIRefresh({ headers = true, zone = ns.C.RefreshZone.backpack })
+		return
+	end
+	if key == "columns" or key == "categoriesPerColumn" or key == "iconSize" then
+		if self:IsShown() then
+			ns:UIRefresh({ layout = true, zone = ns.C.RefreshZone.backpack })
+		end
+		return
+	end
+	-- Chrome-only toggles: bag bar, auto-open matrix, etc.
+	if key == "specialBagColors" or key == "openOnTrade" or key == "openOnMerchant" or key == "openOnMail" or key == "openOnAuction" or key == "openOnScrapping" or key == "flashFind" then
+		if self:IsShown() then
+			ns:UIRefresh({ chrome = true, zone = ns.C.RefreshZone.backpack })
+		end
+		return
+	end
+	if self:IsShown() then
+		ns:UIRefresh({ layout = true, zone = ns.C.RefreshZone.backpack })
 	end
 end
 
 function Backpack:RegisterOptions(category, builder)
 	builder:Slider(category, self, "columns", ns.L["Columns"], ns.L["How many item columns each bag panel is wide."], C.Layout.MIN_COLUMNS, C.Layout.MAX_COLUMNS, 1)
-	builder:Checkbox(category, self, "showBagBar", ns.L["Bag Bar"], ns.L["Toggle the equipped-bag slots."])
+	builder:Slider(category, self, "iconSize", ns.L["Icon Size"], ns.L["Width and height of each item button, in pixels. The window resizes to fit."], C.Layout.MIN_ICON_SIZE, C.Layout.MAX_ICON_SIZE, 1)
+	-- No "Bag Bar" checkbox here: the bag window's own bag-icon button toggles it
+	-- (ToggleBagBar), so a settings duplicate was redundant and popped the window
+	-- on change. showBagBar still persists; the in-bag toggle drives it.
+	builder:Checkbox(category, self, "specialBagColors", ns.L["Specialty Bag Colors"], ns.L["Tint equipped specialty bag slots on the bag bar."])
+	builder:Header(ns.L["Auto-Open Bags"])
+	builder:Checkbox(category, self, "openOnTrade", ns.L["Open on Trade"], ns.L["Open your bags when a trade window appears."])
+	builder:Checkbox(category, self, "openOnMerchant", ns.L["Open on Merchant"], ns.L["Open your bags when talking to a vendor."])
+	builder:Checkbox(category, self, "openOnMail", ns.L["Open on Mail"], ns.L["Open your bags at a mailbox."])
+	builder:Checkbox(category, self, "openOnAuction", ns.L["Open on Auction House"], ns.L["Open your bags at the auction house."])
+	builder:Checkbox(category, self, "openOnScrapping", ns.L["Open on Scrapping"], ns.L["Open your bags at a scrapping machine."])
 	builder:Checkbox(category, self, "flashFind", ns.L["Flash Find"], ns.L["Alt-click an item to highlight every matching stack in your open bags and bank."])
 	builder:Checkbox(category, self, "showJunkPrice", ns.L["Show Junk Total Price"], ns.L["Display the total gold value of all items inside the Junk category header."])
 	builder:Slider(category, self, "categoriesPerColumn", ns.L["Categories Per Column"], ns.L["How many category panels stack in a column before wrapping to a new column on the left."], C.Layout.MIN_CATEGORIES_PER_COLUMN, C.Layout.MAX_CATEGORIES_PER_COLUMN, 1)
 end
 
 function Backpack:OnEnable()
+	if self._hooksInstalled then
+		return
+	end
+	self._hooksInstalled = true
+	self._eventHandles = self._eventHandles or {}
+	local handles = self._eventHandles
+
 	self:BuildWindow()
 	self:SuppressBlizzardBags()
 
-	local toggleButton = CreateFrame("Button", "BagforgeToggleButton", UIParent)
-	toggleButton:RegisterForClicks("AnyUp")
-	toggleButton:SetScript("OnClick", function()
-		Backpack:Toggle()
-	end)
-	self.toggleButton = toggleButton
+	if not self.toggleButton then
+		local toggleButton = CreateFrame("Button", "BagforgeToggleButton", UIParent)
+		toggleButton:RegisterForClicks("AnyUp")
+		toggleButton:SetScript("OnClick", function()
+			Backpack:Toggle()
+		end)
+		self.toggleButton = toggleButton
+	end
 
-	self.bindingFrame = CreateFrame("Frame")
-	self.bindingFrame:SetScript("OnEvent", function(f)
-		f:UnregisterEvent("PLAYER_REGEN_ENABLED")
-		Backpack:SetupKeybinds()
-	end)
+	if not self.bindingFrame then
+		self.bindingFrame = CreateFrame("Frame")
+		self.bindingFrame:SetScript("OnEvent", function(f)
+			f:UnregisterEvent("PLAYER_REGEN_ENABLED")
+			Backpack:SetupKeybinds()
+		end)
+	end
 	self:SetupKeybinds()
 
+	local pendingChangeset
 	local queueDraw = F.DebounceNoArgs(0.05, function()
 		if Backpack:IsShown() then
-			Backpack:Draw()
+			Backpack:Draw(pendingChangeset)
+			pendingChangeset = nil
 		end
 	end)
-	ns:RegisterCallback("Items.Updated", queueDraw)
+	ns:RegisterCallback("Items.Updated", function(_, changeset)
+		pendingChangeset = changeset
+		queueDraw()
+	end, Backpack)
 
-	ns:RegisterEvent("PLAYER_REGEN_ENABLED", function()
+	ns:RegisterCallback("Sort.StateChanged", function()
+		if Backpack.UpdateSortButton then
+			Backpack:UpdateSortButton()
+		end
+	end, Backpack)
+
+	ns:TrackEvent(handles, "PLAYER_REGEN_ENABLED", function()
 		if Backpack.pendingDraw and Backpack:IsShown() then
 			Backpack:Draw()
 		end
@@ -848,13 +966,13 @@ function Backpack:OnEnable()
 		end
 	end)
 
-	ns:RegisterEvent("PLAYER_MONEY", function()
+	ns:TrackEvent(handles, "PLAYER_MONEY", function()
 		if Backpack:IsShown() then
 			Backpack:UpdateMoneyFrame()
 		end
 	end)
 
-	ns:RegisterEvent("CURRENCY_DISPLAY_UPDATE", function()
+	ns:TrackEvent(handles, "CURRENCY_DISPLAY_UPDATE", function()
 		if Backpack:IsShown() then
 			Backpack:UpdateCurrencyBar()
 		end
@@ -865,11 +983,69 @@ function Backpack:OnEnable()
 			Backpack:UpdateBagBar()
 		end
 	end)
-	ns:RegisterEvent("BAG_UPDATE", refreshBagBar)
-	ns:RegisterEvent("ITEM_LOCK_CHANGED", refreshBagBar)
-	ns:RegisterEvent("BAG_CONTAINER_UPDATE", refreshBagBar)
+	ns:TrackEvent(handles, "BAG_UPDATE", refreshBagBar)
+	ns:TrackEvent(handles, "ITEM_LOCK_CHANGED", refreshBagBar)
+	ns:TrackEvent(handles, "BAG_CONTAINER_UPDATE", refreshBagBar)
 
-	ns:RegisterEvent("UPDATE_BINDINGS", function()
+	ns:TrackEvent(handles, "UPDATE_BINDINGS", function()
 		Backpack:SetupKeybinds()
 	end)
+
+	-- Baganator OpenClose.lua: open on SHOW; close on HIDE only if we auto-opened
+	-- (manual open stays open when the merchant/mail/etc. window closes).
+	local IT = Enum.PlayerInteractionType
+	local openOnByType = {
+		[IT.TradePartner] = "openOnTrade",
+		[IT.Merchant] = "openOnMerchant",
+		[IT.MailInfo] = "openOnMail",
+		[IT.Auctioneer] = "openOnAuction",
+		[IT.ScrappingMachine] = "openOnScrapping",
+	}
+	local function InteractionOptionEnabled(interactionType)
+		local key = openOnByType[interactionType]
+		if not key then
+			return false
+		end
+		local db = ns.db and ns.db.backpack
+		return db and db[key] and true or false
+	end
+	ns:TrackEvent(handles, "PLAYER_INTERACTION_MANAGER_FRAME_SHOW", function(_, interactionType)
+		if not InteractionOptionEnabled(interactionType) then
+			return
+		end
+		-- Already open from a keybind — don't claim ownership.
+		if Backpack:IsShown() and not Backpack._autoOpened then
+			return
+		end
+		if not Backpack:IsShown() then
+			Backpack._autoOpened = true
+			Backpack:Open(true)
+		else
+			Backpack._autoOpened = true
+		end
+	end)
+	ns:TrackEvent(handles, "PLAYER_INTERACTION_MANAGER_FRAME_HIDE", function(_, interactionType)
+		if not InteractionOptionEnabled(interactionType) then
+			return
+		end
+		if Backpack._autoOpened then
+			Backpack:Close()
+		end
+	end)
+end
+
+function Backpack:OnDisable()
+	if not self._hooksInstalled then
+		return
+	end
+	self._hooksInstalled = false
+	ns:UnregisterModuleEventHandles(self._eventHandles)
+	ns:UnregisterCallback("Items.Updated", Backpack)
+	ns:UnregisterCallback("Sort.StateChanged", Backpack)
+	if self.Close then
+		self:Close()
+	end
+	if self.RestoreBlizzardBags then
+		self:RestoreBlizzardBags()
+	end
 end

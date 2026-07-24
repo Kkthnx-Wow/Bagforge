@@ -32,13 +32,13 @@ local format = string.format
 local tonumber = tonumber
 local pairs = pairs
 local wipe = wipe
-local select = select
 local tsort = table.sort
 
-local C_Item = C_Item
 local CursorHasItem = CursorHasItem
 local GetCursorInfo = GetCursorInfo
 local MerchantFrame = _G["MerchantFrame"]
+local MailFrame = _G["MailFrame"]
+local TradeFrame = _G["TradeFrame"]
 local MenuUtil = _G["MenuUtil"]
 local StaticPopup_Show = StaticPopup_Show
 local StaticPopupDialogs = StaticPopupDialogs
@@ -51,6 +51,7 @@ ns:RegisterDefaults({
 		searchEnable = true, -- honour saved search categories when classifying
 		searchHideNonMatches = false, -- hide (true) vs dim (false) non-matching search results
 		stackMerge = false, -- collapse identical stacks into one button
+		dontMergePartial = false, -- when true, partial stacks never merge with other stacks
 		showCategoryCounts = true, -- append item totals to category panel headers
 		itemSort = "quality", -- within-category sort: quality|name|ilvl|expansion|vendor
 		assignments = {}, -- [itemID] = categoryName  (O(1) classify lookup)
@@ -110,13 +111,13 @@ local function ParseItemAndName(rest)
 	local itemID
 	local link = rest:match("|c%x+|Hitem:.-|h.-|h|r") or rest:match("|Hitem:.-|h.-|h|r")
 	if link then
-		itemID = C_Item.GetItemInfoInstant(link)
+		itemID = F.GetItemIDFromLink(link)
 		rest = rest:gsub("|c%x+|Hitem:.-|h.-|h|r", ""):gsub("|Hitem:.-|h.-|h|r", "")
 	end
 	if not itemID and CursorHasItem() then
 		local infoType, a, b = GetCursorInfo()
 		if infoType == "item" then
-			itemID = (type(a) == "number" and a) or (b and C_Item.GetItemInfoInstant(b))
+			itemID = (type(a) == "number" and a) or (b and F.GetItemIDFromLink(b))
 		end
 	end
 	local name = rest:gsub("^%s+", ""):gsub("%s+$", "")
@@ -124,10 +125,7 @@ local function ParseItemAndName(rest)
 end
 
 local function ItemLabel(itemID)
-	if itemID and F.IsSecret(itemID) then
-		return L["(unknown item)"]
-	end
-	local name = C_Item and C_Item.GetItemInfo and C_Item.GetItemInfo(itemID)
+	local name = F.GetItemName(itemID)
 	return name or format(L["item:%s"], itemID)
 end
 
@@ -154,7 +152,7 @@ end
 --- Assign `itemID` to the custom category `name`, then reclassify + redraw.
 function Organize:AssignItem(itemID, name)
 	local o = DB()
-	if not (o and itemID and F.NotSecret(itemID)) then
+	if not (o and itemID) then
 		return false
 	end
 	name = name and name:gsub("^%s+", ""):gsub("%s+$", "")
@@ -163,19 +161,19 @@ function Organize:AssignItem(itemID, name)
 	end
 	o.assignments[itemID] = name
 	F.Print(format(L["Assigned %s to category '%s'."], ItemLabel(itemID), name))
-	ns:RefreshBags(true)
+	ns:RefreshItemCategory(itemID)
 	return true
 end
 
 --- Drop a custom assignment for `itemID` (item returns to automatic sorting).
 function Organize:UnassignItem(itemID)
 	local o = DB()
-	if not (o and itemID and F.NotSecret(itemID) and o.assignments[itemID]) then
+	if not (o and itemID and o.assignments[itemID]) then
 		return false
 	end
 	o.assignments[itemID] = nil
 	F.Print(format(L["Removed %s from its custom category."], ItemLabel(itemID)))
-	ns:RefreshBags(true)
+	ns:RefreshItemCategory(itemID)
 	return true
 end
 
@@ -188,6 +186,17 @@ end
 local function CleanName(name)
 	name = name and name:gsub("^%s+", ""):gsub("%s+$", "")
 	return (name and name ~= "") and name or nil
+end
+
+local function InvalidateSearchAndReclassify()
+	local categories = ns:GetModule("Categories")
+	if categories and categories.InvalidateSearchCache then
+		categories:InvalidateSearchCache()
+	end
+	if ns.Search then
+		ns.Search.Invalidate()
+	end
+	ns:ReclassifyBags()
 end
 
 --- Create or update a saved search. `opts` may carry order/groupBy/enabled;
@@ -214,10 +223,7 @@ function Organize:SetSearch(name, query, opts)
 	end
 	def.query = def.query or ""
 	o.searches[name] = def
-	if ns.Search then
-		ns.Search.Invalidate()
-	end
-	ns:RefreshBags(true)
+	InvalidateSearchAndReclassify()
 	return true
 end
 
@@ -231,10 +237,7 @@ function Organize:RemoveSearch(name)
 	o.searches[name] = nil
 	o.order[name] = nil
 	o.colors[name] = nil
-	if ns.Search then
-		ns.Search.Invalidate()
-	end
-	ns:RefreshBags(true)
+	InvalidateSearchAndReclassify()
 	return true
 end
 
@@ -288,7 +291,7 @@ function Organize:SetOrder(name, value)
 		return false
 	end
 	o.order[name] = value
-	ns:RefreshBags(true)
+	ns:RefreshCategoryOrders()
 	return true
 end
 
@@ -404,7 +407,7 @@ function Organize:MoveVisibleCategory(owner, categoryName, direction)
 	local order = o.order or {}
 	o.order = order
 	order[categoryName] = newOrder
-	ns:RefreshBags(true)
+	ns:RefreshCategoryOrders()
 	return true
 end
 
@@ -418,7 +421,7 @@ function Organize:ResetCategoryOrder()
 		return false
 	end
 	wipe(o.order)
-	ns:RefreshBags(true)
+	ns:RefreshCategoryOrders()
 	return true
 end
 
@@ -500,16 +503,32 @@ function Organize:OpenCategoryOrderMenu(ownerFrame, categoryName, owner)
 		end)
 		local transfers = ns:GetModule("Transfers")
 		local entries = CategoryEntries(owner, categoryName)
-		if transfers and entries and #entries > 0 and IsBackpackOwner(owner) then
-			if MerchantFrame and MerchantFrame:IsShown() then
-				root:CreateButton(L["Vendor Category"], function()
-					transfers:VendorCategory(categoryName, entries)
-				end)
-			end
-			local bank = ns:GetModule("Bank")
-			if bank and bank.OpenView and bank:OpenView() then
-				root:CreateButton(L["Deposit Category to Bank"], function()
-					transfers:DepositCategory(categoryName, entries)
+		if transfers and entries and #entries > 0 then
+			if IsBackpackOwner(owner) then
+				if MerchantFrame and MerchantFrame:IsShown() then
+					root:CreateButton(L["Vendor Category"], function()
+						transfers:VendorCategory(categoryName, entries)
+					end)
+				end
+				local bank = ns:GetModule("Bank")
+				if bank and bank.OpenView and bank:OpenView() then
+					root:CreateButton(L["Deposit Category to Bank"], function()
+						transfers:DepositCategory(categoryName, entries)
+					end)
+				end
+				if MailFrame and MailFrame:IsShown() then
+					root:CreateButton(L["Mail Category"], function()
+						transfers:MailCategory(categoryName, entries)
+					end)
+				end
+				if TradeFrame and TradeFrame:IsShown() then
+					root:CreateButton(L["Trade Category"], function()
+						transfers:TradeCategory(categoryName, entries)
+					end)
+				end
+			elseif owner and owner.bankType and owner.open then
+				root:CreateButton(L["Withdraw Category to Bags"], function()
+					transfers:WithdrawCategory(categoryName, entries)
 				end)
 			end
 		end
@@ -591,6 +610,10 @@ function Organize:RenameCategory(oldName, newName, kind)
 		o.searches[newName] = o.searches[oldName]
 		o.searches[oldName] = nil
 	else
+		-- Don't collide with an existing saved-search category name.
+		if o.searches[newName] then
+			return false
+		end
 		for itemID, name in pairs(o.assignments) do
 			if name == oldName then
 				o.assignments[itemID] = newName
@@ -605,10 +628,11 @@ function Organize:RenameCategory(oldName, newName, kind)
 		o.colors[newName], o.colors[oldName] = o.colors[oldName], nil
 	end
 
-	if ns.Search then
-		ns.Search.Invalidate()
+	if kind == "search" then
+		InvalidateSearchAndReclassify()
+		return true
 	end
-	ns:RefreshBags(true)
+	ns:RenameCategoryInScanners(oldName, newName)
 	return true
 end
 
@@ -633,10 +657,11 @@ function Organize:DeleteCategory(name, kind)
 	o.order[name] = nil
 	o.colors[name] = nil
 
-	if ns.Search then
-		ns.Search.Invalidate()
+	if kind == "search" then
+		InvalidateSearchAndReclassify()
+	else
+		ns:ReclassifyBags()
 	end
-	ns:RefreshBags(true)
 	return true
 end
 
@@ -654,7 +679,7 @@ function Organize:ApplyManagedOrder(orderedNames)
 	for i = 1, #orderedNames do
 		o.order[orderedNames[i]] = CUSTOM_ORDER_BASE + i * 0.01
 	end
-	ns:RefreshBags(true)
+	ns:RefreshCategoryOrders()
 end
 
 -- ---------------------------------------------------------------------------
@@ -684,7 +709,7 @@ function Organize:SetSortMode(mode)
 	if ns.Scan and ns.Scan.SetSortMode then
 		ns.Scan.SetSortMode(mode)
 	end
-	ns:RefreshBags(true)
+	ns:ResortBags()
 end
 
 --- Re-validate the saved item sort and re-point the scanner without rescanning.
@@ -712,6 +737,9 @@ end
 
 -- ---------------------------------------------------------------------------
 -- Sort slot locks (Ctrl+right-click on an item; Blizzard bag sort may still move)
+-- Keys are bag:slot by design — after sort/deposit a different item in that
+-- slot inherits the lock. Transfers honour IsSortLocked; re-keying by GUID
+-- would fight Blizzard's own sort-ignore flags.
 -- ---------------------------------------------------------------------------
 function Organize:SortLockKey(bag, slot)
 	return bag .. ":" .. slot
@@ -770,18 +798,14 @@ function Organize:ExportCategories()
 	end
 	local assignments = {}
 	for itemID, catName in pairs(o.assignments) do
-		if F.NotSecret(itemID) then
-			assignments[tostring(itemID)] = catName
-		end
+		assignments[tostring(itemID)] = catName
 	end
 	local junkOut
 	local junk = JunkDB()
 	if junk then
 		junkOut = {}
 		for itemID in pairs(junk) do
-			if F.NotSecret(itemID) then
-				junkOut[tostring(itemID)] = true
-			end
+			junkOut[tostring(itemID)] = true
 		end
 		if not next(junkOut) then
 			junkOut = nil
@@ -824,6 +848,7 @@ function Organize:ImportCategories(json)
 	o.searches = o.searches or {}
 	local existingSearches = o.searches
 	local renamed = 0
+	local renameMap = {} -- original import name -> final stored name
 	if type(data.searches) == "table" then
 		for name, def in pairs(data.searches) do
 			if type(name) == "string" and type(def) == "table" then
@@ -833,41 +858,45 @@ function Organize:ImportCategories(json)
 					renamed = renamed + 1
 				end
 				existingSearches[target] = CopyTable(def)
+				if target ~= name then
+					renameMap[name] = target
+				end
 			end
 		end
+	end
+
+	local function RemapName(catName)
+		return renameMap[catName] or catName
 	end
 
 	if type(data.assignments) == "table" then
 		for idStr, catName in pairs(data.assignments) do
 			local itemID = tonumber(idStr)
-			if itemID and F.NotSecret(itemID) and type(catName) == "string" then
-				o.assignments[itemID] = catName
+			if itemID and type(catName) == "string" then
+				o.assignments[itemID] = RemapName(catName)
 			end
 		end
 	end
 	if type(data.order) == "table" then
 		for name, ord in pairs(data.order) do
-			if type(name) == "string" and type(ord) == "number" and F.NotSecret(ord) then
-				o.order[name] = ord
+			if type(name) == "string" and type(ord) == "number" then
+				o.order[RemapName(name)] = ord
 			end
 		end
 	end
 	if type(data.colors) == "table" then
 		for name, color in pairs(data.colors) do
 			if type(name) == "string" and type(color) == "table" then
-				o.colors[name] = { color[1], color[2], color[3] }
+				o.colors[RemapName(name)] = { color[1], color[2], color[3] }
 			end
 		end
-	end
-	if type(data.managedOrder) == "table" and #data.managedOrder > 0 then
-		self:ApplyManagedOrder(data.managedOrder)
 	end
 
 	local junk = JunkDB()
 	if junk and type(data.customJunk) == "table" then
 		for idStr, enabled in pairs(data.customJunk) do
 			local itemID = tonumber(idStr)
-			if itemID and F.NotSecret(itemID) and enabled then
+			if itemID and enabled then
 				junk[itemID] = true
 			end
 		end
@@ -875,6 +904,27 @@ function Organize:ImportCategories(json)
 
 	if ns.Search then
 		ns.Search.Invalidate()
+	end
+	local categories = ns:GetModule("Categories")
+	if categories and categories.InvalidateSearchCache then
+		categories:InvalidateSearchCache()
+	end
+	-- Write order pins into DB before the rebuild so the scan sees them.
+	-- Reclassify can be frame-budgeted; a sync RefreshBags(false) after it used
+	-- to paint before categories finished. Full rescan waits on the model.
+	if type(data.managedOrder) == "table" and #data.managedOrder > 0 then
+		local remapped = {}
+		for i = 1, #data.managedOrder do
+			local n = data.managedOrder[i]
+			remapped[i] = type(n) == "string" and RemapName(n) or n
+		end
+		for i = 1, #remapped do
+			o.order[remapped[i]] = CUSTOM_ORDER_BASE + i * 0.01
+		end
+	end
+	local items = ns:GetModule("Items")
+	if items and items.MarkScanDirty then
+		items:MarkScanDirty()
 	end
 	ns:RefreshBags(true)
 	local msg = L["Categories imported."]
@@ -906,6 +956,14 @@ end
 --- only one mode is ever active at a time.
 function Organize:SetMode(mode)
 	self.mode = mode
+	local itemButton = ns:GetModule("ItemButton")
+	if itemButton then
+		if mode == "delete" then
+			itemButton:InstallDeleteClickHook()
+		else
+			itemButton:UninstallDeleteClickHook()
+		end
+	end
 	if self.modeButtons then
 		for m, button in pairs(self.modeButtons) do
 			local active = (m == mode)
@@ -956,9 +1014,6 @@ function Organize:OpenAssignMenu(ownerButton, entry)
 		return
 	end
 	local id = entry.itemID
-	if F.IsSecret(id) then
-		return
-	end
 
 	if not (MenuUtil and MenuUtil.CreateContextMenu) then
 		self:PromptNewCategory(id)
@@ -992,7 +1047,7 @@ end
 -- ---------------------------------------------------------------------------
 --- Vendor sell price of an itemID (cached via Scan).
 local function SellPrice(itemID)
-	if not (itemID and F.NotSecret(itemID) and ns.Scan and ns.Scan.GetSellPrice) then
+	if not (itemID and ns.Scan and ns.Scan.GetSellPrice) then
 		return 0
 	end
 	return ns.Scan.GetSellPrice(itemID) or 0
@@ -1002,7 +1057,7 @@ end
 --- qualify (selling worthless items is pointless, and it matches NDui).
 function Organize:SetJunk(itemID, junked)
 	local junk = JunkDB()
-	if not (junk and itemID) or F.IsSecret(itemID) then
+	if not (junk and itemID) then
 		return false
 	end
 	if junked and SellPrice(itemID) <= 0 then
@@ -1011,7 +1066,7 @@ function Organize:SetJunk(itemID, junked)
 	end
 	junk[itemID] = junked or nil
 	F.Print(format(junked and L["%s is now marked as junk."] or L["%s is no longer junk."], ItemLabel(itemID)))
-	ns:RefreshBags(true)
+	ns:RefreshItemCategory(itemID)
 	return true
 end
 
@@ -1019,7 +1074,7 @@ end
 function Organize:ToggleJunk(entry)
 	local id = entry and entry.itemID
 	local junk = JunkDB()
-	if not (junk and id) or F.IsSecret(id) then
+	if not (junk and id) then
 		return
 	end
 	self:SetJunk(id, not junk[id])
@@ -1033,7 +1088,7 @@ function Organize:ClearJunk()
 	end
 	wipe(junk)
 	F.Print(L["Custom junk list cleared."])
-	ns:RefreshBags(true)
+	ns:ReclassifyBags()
 end
 
 -- ---------------------------------------------------------------------------
@@ -1105,9 +1160,16 @@ end
 
 function Organize:CmdClear(rest)
 	local o = DB()
-	local name = (rest or ""):gsub("^%s+", ""):gsub("%s+$", "")
-	if not o or name == "" then
+	local name = CleanName(rest)
+	if not o or not name then
 		F.Print(L["Usage: /bf cat clear <name>"])
+		return
+	end
+	-- Search categories: full delete (query + colour + order).
+	if o.searches and o.searches[name] then
+		if self:DeleteCategory(name, "search") then
+			F.Print(format(L["Cleared custom category '%s' (%d items)."], name, 0))
+		end
 		return
 	end
 	local removed = 0
@@ -1118,8 +1180,11 @@ function Organize:CmdClear(rest)
 		end
 	end
 	o.order[name] = nil
+	if o.colors then
+		o.colors[name] = nil
+	end
 	F.Print(format(L["Cleared custom category '%s' (%d items)."], name, removed))
-	ns:RefreshBags(true)
+	ns:ReclassifyBags()
 end
 
 function Organize:CmdOrder(rest)
@@ -1136,7 +1201,7 @@ function Organize:CmdOrder(rest)
 	end
 	o.order[name] = num
 	F.Print(format(L["Pinned '%s' to order %s."], name, tostring(num)))
-	ns:RefreshBags(true)
+	ns:RefreshCategoryOrders()
 end
 
 function Organize:CmdUnorder(rest)
@@ -1148,7 +1213,7 @@ function Organize:CmdUnorder(rest)
 	end
 	o.order[name] = nil
 	F.Print(format(L["Cleared the order override for '%s'."], name))
-	ns:RefreshBags(true)
+	ns:RefreshCategoryOrders()
 end
 
 function Organize:HandleCommand(value)
@@ -1275,24 +1340,77 @@ end
 -- Settings + live apply
 -- ---------------------------------------------------------------------------
 function Organize:OnSettingChanged(key)
-	-- Item sort swaps the scanner's comparator pointer; the binding already wrote
-	-- the new value, so just validate + re-point and rescan. Every other toggle
-	-- here changes item membership / display structure, so it rescans too.
 	if key == "itemSort" then
 		self:ValidateSortMode()
-	end
-	if key == "showCategoryCounts" then
-		ns:RefreshBags(false)
+		ns:ResortBags()
 		return
 	end
-	ns:RefreshBags(true)
+	if key == "showCategoryCounts" or key == "searchHideNonMatches" then
+		if key == "showCategoryCounts" then
+			ns:UIRefresh({ headers = true })
+		else
+			-- Hide vs dim changes LayoutEntries membership. Invalidate panel
+			-- caches and force a non-incremental draw (patch path skips Layout).
+			ns.DrawEpoch = (ns.DrawEpoch or 0) + 1
+			local function clearIncremental(scanner)
+				local cs = scanner and scanner.lastChangeset
+				if cs then
+					cs.incremental = false
+				end
+			end
+			local items = ns:GetModule("Items")
+			if items and items.scanner then
+				clearIncremental(items.scanner)
+			end
+			local backpack = ns:GetModule("Backpack")
+			if backpack and backpack.InvalidateItemLayouts then
+				backpack:InvalidateItemLayouts()
+			end
+			local bank = ns:GetModule("Bank")
+			if bank and bank.views then
+				for i = 1, #bank.views do
+					local view = bank.views[i]
+					if view.scanner then
+						clearIncremental(view.scanner)
+					end
+					if view.InvalidateItemLayouts then
+						view:InvalidateItemLayouts()
+					end
+				end
+			end
+			ns:RefreshBags(false)
+		end
+		return
+	end
+	if key == "stackMerge" then
+		ns:ApplyStackMerge()
+		return
+	end
+	if key == "dontMergePartial" then
+		if ns.db and ns.db.organize and ns.db.organize.dontMergePartial and ns.db.organize.stackMerge then
+			ns:RefreshBags(true)
+		else
+			ns:ApplyStackMerge()
+		end
+		return
+	end
+	if key == "searchEnable" then
+		InvalidateSearchAndReclassify()
+		return
+	end
+	if key == "customEnable" then
+		ns:ReclassifyBags()
+		return
+	end
 end
 
 function Organize:RegisterOptions(category, builder)
 	builder:Checkbox(category, self, "customEnable", L["Enable Custom Categories"], L["Honour items you've assigned to your own categories (/bf cat add)."])
 	builder:Checkbox(category, self, "searchEnable", L["Enable Search Categories"], L["Honour your saved search-query categories when sorting items."])
 	builder:Checkbox(category, self, "searchHideNonMatches", L["Hide Search Non-Matches"], L["Hide items that don't match the search box. Off dims them instead (Blizzard default)."])
-	builder:Checkbox(category, self, "stackMerge", L["Merge Stacks"], L["Show identical stackable items as a single button with the combined count."])
+	local _, merge = builder:Checkbox(category, self, "stackMerge", L["Merge Stacks"], L["Show identical stackable items as one button with the combined count. Lock and quest icons update from every stack in the merged pile."])
+	local _, noPartial = builder:Checkbox(category, self, "dontMergePartial", L["Don't Merge Partial Stacks"], L["Partial stacks stay on their own button and will not combine with full or other partial stacks."])
+	builder:DependsOn(noPartial, merge)
 	builder:Checkbox(category, self, "showCategoryCounts", L["Show Category Counts"], L["Append the number of items in each category panel header."])
 
 	builder:Header(L["Item Sort"])
@@ -1317,7 +1435,7 @@ function Organize:RegisterOptions(category, builder)
 	-- already names the section (same pattern as Edit Mode / Cooldown Manager).
 	builder:Button("", L["Open"], function()
 		self:OpenManager()
-	end, L["Rename, recolour, reorder, enable and delete your custom and search categories."])
+	end, L["Rename, recolor, reorder, enable and delete your custom and search categories."])
 end
 
 -- New-category prompt used by the assign menu's "New Category..." entry.
@@ -1370,4 +1488,11 @@ if StaticPopupDialogs then
 		whileDead = 1,
 		hideOnEscape = 1,
 	}
+end
+
+function Organize:OnDisable()
+	-- Disarm assign/junk/delete modes so the delete click hook is uninstalled.
+	if self.mode then
+		self:SetMode(nil)
+	end
 end

@@ -11,11 +11,10 @@ local _, ns = ...
 local C, F = ns.C, ns.F
 
 local select, type, tostring = select, type, tostring
-local pairs, ipairs = pairs, ipairs
+local pairs = pairs
 local floor = math.floor
 local format = string.format
 local tconcat = table.concat
-local tremove = table.remove
 local wipe = wipe
 local pcall = pcall
 local CreateFrame = CreateFrame
@@ -121,12 +120,6 @@ function F.DecoratePickupMoneyFrame(money, tooltipAnchor)
 
 	local function OnEnter()
 		highlight:Show()
-		if GetMoney and F.IsSecret(GetMoney()) then
-			GameTooltip:SetOwner(money, tooltipAnchor)
-			GameTooltip:SetText(L["Money"])
-			GameTooltip:Show()
-			return
-		end
 		GameTooltip:SetOwner(money, tooltipAnchor)
 		GameTooltip:SetText(L["Money"])
 		F.AddClickHintLine(GameTooltip, "left", "%s to pick up money")
@@ -150,9 +143,38 @@ end
 -- Money
 -- ---------------------------------------------------------------------------
 
+local InCombatLockdown = _G["InCombatLockdown"]
+local MoneyFrame_UpdateMoney = _G["MoneyFrame_UpdateMoney"]
+local MoneyFrame_SetType = _G["MoneyFrame_SetType"]
+
+--- True when the player money frame can be refreshed outside combat lockdown.
+function F.CanUpdatePlayerMoney()
+	if InCombatLockdown and InCombatLockdown() then
+		return false
+	end
+	return true
+end
+
+--- Show and refresh a SmallMoneyFrameTemplate, or hide when money is unavailable.
+--- Optional moneyType for bank account/character frames. Returns true on success.
+function F.UpdatePlayerMoneyFrame(money, moneyType)
+	if not money or not MoneyFrame_UpdateMoney then
+		return false
+	end
+	if not F.CanUpdatePlayerMoney() then
+		money:Hide()
+		return false
+	end
+	money:Show()
+	if moneyType and MoneyFrame_SetType then
+		MoneyFrame_SetType(money, moneyType)
+	end
+	MoneyFrame_UpdateMoney(money)
+	return true
+end
+
 --- Format a copper amount into "Xg Ys Zc" using Blizzard's coin icons. The gold
---- component gets thousands separators. Callers must pre-screen secret values
---- (GetMoney can return a secret in combat - see the Midnight guide).
+--- component gets thousands separators.
 function F.FormatMoney(copper)
 	copper = floor(copper or 0)
 	local gold = floor(copper / 10000)
@@ -172,9 +194,43 @@ function F.FormatMoney(copper)
 	return format("%d%s", copperRem, copperIcon)
 end
 
+-- Frame budget for hot UI paths (Baganator CheckTimeout ~100ms).
+local frameBudgetStart
+
+function F.ReportFrameBudget()
+	frameBudgetStart = GetTimePreciseSec and GetTimePreciseSec() or GetTime()
+end
+
+function F.FrameBudgetExceeded(limitSec)
+	if not frameBudgetStart then
+		return false
+	end
+	local now = GetTimePreciseSec and GetTimePreciseSec() or GetTime()
+	return (now - frameBudgetStart) >= (limitSec or 0.1)
+end
+
 --- Stable hash key for a bag/slot pair (used across scan, transfers, and buttons).
 function F.SlotKey(bag, slot)
 	return (bag or 0) * 1000 + (slot or 0)
+end
+
+function F.SlotBag(key)
+	return floor((key or 0) / 1000)
+end
+
+function F.SlotIndex(key)
+	return (key or 0) % 1000
+end
+
+--- WoW frame levels must stay in [0, 65535]; negative parents are valid.
+function F.ClampFrameLevel(level)
+	if not level or level < 0 then
+		return 0
+	end
+	if level > 65535 then
+		return 65535
+	end
+	return level
 end
 
 --- Cached vendor sell price per itemID (delegates to Core/Scan.lua).
@@ -289,12 +345,13 @@ local bucketArgCount = 0
 --- Bucket rapid-fire events (BetterBags-style): each fire resets the timer;
 --- `handler` runs once after `delay` seconds of quiet. Registers on the
 --- shared ns event frame.
+--- Returns the registered callback so callers can UnregisterEvent on teardown.
 function F.BucketEvent(event, delay, handler)
 	if not (event and handler) then
 		return
 	end
 	delay = delay or 0.2
-	ns:RegisterEvent(event, function(...)
+	local callback = function(...)
 		bucketArgCount = select("#", ...)
 		for i = 1, bucketArgCount do
 			bucketArgs[i] = select(i, ...)
@@ -307,7 +364,8 @@ function F.BucketEvent(event, delay, handler)
 			bucketTimers[event] = nil
 			handler(unpack(bucketArgs, 1, bucketArgCount))
 		end)
-	end)
+	end
+	return ns:RegisterEvent(event, callback)
 end
 
 -- ---------------------------------------------------------------------------
@@ -847,10 +905,10 @@ end
 
 -- ---------------------------------------------------------------------------
 -- Secret values (Patch 12.0 / Midnight)
---   A handful of APIs (money in combat, unit identity in instances) return
---   "secret" values that tainted code may not compare or do arithmetic on.
---   Gate any such read with these guards first. Each helper is safe to call
---   even on clients where the underlying primitive doesn't exist.
+--   Only gate APIs Resources tags as return-secret (see
+--   wow-midnight-secret-values-guide.mdc). Item/container/money fields are
+--   SecretArguments-only or untagged — do not invent IsSecret there.
+--   Keep helpers for identity (Recent GUID) and IsSecretLuaError swallows.
 -- ---------------------------------------------------------------------------
 do
 	local issecretvalue = _G["issecretvalue"]
@@ -870,6 +928,23 @@ do
 	--- the primitive is unavailable (i.e. pre-Midnight clients).
 	function F.CanAccessValue(value)
 		return not canaccessvalue or canaccessvalue(value)
+	end
+
+	--- Return `value` when safe to compare or do arithmetic; nil if secret/missing.
+	--- Prefer raw numbers for untagged item APIs; kept for soft coerce callers.
+	function F.SafeNumber(value)
+		if value == nil or F.IsSecret(value) then
+			return nil
+		end
+		return value
+	end
+
+	--- Return `value` when safe to branch on; nil if secret/missing.
+	function F.SafeBool(value)
+		if value == nil or F.IsSecret(value) then
+			return nil
+		end
+		return value
 	end
 
 	--- True when a Lua error was raised by touching a secret value in tainted code.
@@ -998,6 +1073,94 @@ function F.AnchorOverlayCorner(overlay, parent, corner, inset)
 	else
 		overlay:SetPoint("TOPLEFT", parent, "TOPLEFT", inset, -inset)
 	end
+end
+
+--- Normalize C_Item.GetItemInfo for Midnight (ItemInfo table) and older
+--- multi-return callers. Field names match Blizzard ItemDocumentation.lua.
+--- Returns nil when data is not cached yet.
+function F.GetItemInfoRecord(itemIDOrLink)
+	if not (itemIDOrLink and C_Item and C_Item.GetItemInfo) then
+		return nil
+	end
+	local a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q, r = C_Item.GetItemInfo(itemIDOrLink)
+	if not a then
+		return nil
+	end
+	if type(a) == "table" then
+		return a
+	end
+	return {
+		itemName = a,
+		itemLink = b,
+		itemQuality = c,
+		itemLevel = d,
+		itemMinLevel = e,
+		itemType = f,
+		itemSubType = g,
+		itemStackCount = h,
+		itemEquipLoc = i,
+		itemTexture = j,
+		sellPrice = k,
+		classID = l,
+		subclassID = m,
+		bindType = n,
+		expansionID = o,
+		setID = p,
+		isCraftingReagent = q,
+		itemDescription = r,
+	}
+end
+
+--- Normalize C_Item.GetItemInfoInstant. Blizzard documents a *different* shape
+--- than GetItemInfo: itemID, itemType, itemSubType, itemEquipLoc, icon, classID,
+--- subclassID (no link, quality, stack, or expansion). See warcraft.wiki.gg
+--- API_C_Item.GetItemInfoInstant and ItemDocumentation.lua.
+function F.GetItemInfoInstantRecord(itemIDOrLink)
+	if not (itemIDOrLink and C_Item and C_Item.GetItemInfoInstant) then
+		return nil
+	end
+	local a, b, c, d, e, f, g = C_Item.GetItemInfoInstant(itemIDOrLink)
+	if not a then
+		return nil
+	end
+	if type(a) == "table" then
+		local sub = a.subclassID or a.subClassID
+		return {
+			itemID = a.itemID,
+			itemType = a.itemType,
+			itemSubType = a.itemSubType,
+			itemEquipLoc = a.itemEquipLoc,
+			itemTexture = a.itemTexture or a.icon,
+			classID = a.classID,
+			subclassID = sub,
+			subClassID = sub,
+		}
+	end
+	return {
+		itemID = a,
+		itemType = b,
+		itemSubType = c,
+		itemEquipLoc = d,
+		itemTexture = e,
+		classID = f,
+		subclassID = g,
+		subClassID = g,
+	}
+end
+
+--- Item ID from a full item hyperlink (stable across API return-shape changes).
+function F.GetItemIDFromLink(link)
+	if not link then
+		return nil
+	end
+	local id = link:match("item:(%d+)")
+	return id and tonumber(id) or nil
+end
+
+--- Localized item name from either API shape.
+function F.GetItemName(itemID)
+	local info = F.GetItemInfoRecord(itemID)
+	return info and info.itemName
 end
 
 -- Item-level and bind-label helpers live in Modules/ItemInfo.lua (cached at scan).

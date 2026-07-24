@@ -7,20 +7,22 @@
 
 	  * Categories - a filter that routes matching items into a named bag panel,
 	    modelled on BetterBags' RegisterCategoryFunction (return a name, or nil
-	    to pass). Bagforge owns priority, secret-value safety and redraws; the
+	    to pass). Bagforge owns priority and redraws; the
 	    plugin only answers "does this item belong, and where".
 	  * Sort modes  - a within-category comparator that shows up as a choice in
 	    the Item Sort dropdown.
 	  * Corner widgets - per-item overlays (upgrade arrows, etc.) on bag buttons.
 	  * Item button callbacks - full-button overlays (TransmogLootHelper, etc.);
 	    see RegisterItemButtonCallback / RequestItemButtonsRefresh.
+	  * Junk detectors   - third-party junk overlays (Dejunk, Scrap, etc.);
+	    see RegisterJunkDetector / IsItemJunk.
 
 	Design rules that keep this safe:
 	  * Plugins never touch ns.db or internal modules - they hand us closures.
 	  * Every plugin closure is pcall-guarded so a faulty plugin can't break a
 	    scan, a sort or the classifier (Categories/Scan call through here).
-	  * Use API:SafeSortNumber() before comparing numeric scan fields in custom
-	    sort comparators; secret values must not be used in arithmetic/compare.
+	  * Use API:SafeSortNumber() to normalize missing numeric scan fields in custom
+	    sort comparators.
 	  * Each registration is attributed to a "source" (the owning plugin). The
 	    settings Plugins page lists sources and lets the player toggle each one;
 	    a disabled source contributes nothing.
@@ -39,7 +41,6 @@
 	            comparator = function(a, b)
 	                local priceA = a.sellPrice or (a.itemID and ns.Scan and ns.Scan.GetSellPrice(a.itemID, a.hyperlink)) or 0
 	                local priceB = b.sellPrice or (b.itemID and ns.Scan and ns.Scan.GetSellPrice(b.itemID, b.hyperlink)) or 0
-	                if F.IsSecret(priceA) or F.IsSecret(priceB) then return false end
 	                return (priceA or 0) > (priceB or 0)
 	            end,
 	        })
@@ -51,7 +52,7 @@
 --]]
 
 local _, ns = ...
-local L, F = ns.L, ns.F
+local F = ns.F
 
 local type = type
 local pairs = pairs
@@ -66,11 +67,23 @@ local API = {}
 ns.API = API
 API.version = 2
 
+local ScheduleButtonRefresh = F.DebounceNoArgs(0.05, function()
+	if ns.UIRefresh then
+		ns:UIRefresh({ paint = true })
+	elseif ns.RefreshBags then
+		ns:RefreshBags(false)
+	end
+end)
+
 -- Coalesce a burst of registrations (a plugin adding several categories at once)
 -- into a single rescan instead of one per call.
 local ScheduleRefresh = F.DebounceNoArgs(0.05, function()
 	if ns.db then
-		ns:RefreshBags(true)
+		if ns.ReclassifyBags then
+			ns:ReclassifyBags()
+		else
+			ns:RefreshBags(true)
+		end
 	end
 end)
 
@@ -310,12 +323,12 @@ function API:GetSortChoices()
 	return out
 end
 
---- Safe numeric read for plugin sort comparators (Midnight secret values).
+--- Numeric read with a fallback for plugin sort comparators.
 function API:SafeSortNumber(value, fallback)
 	if ns.Scan and ns.Scan.SafeSortNumber then
 		return ns.Scan.SafeSortNumber(value, fallback or 0)
 	end
-	if value == nil or F.IsSecret(value) then
+	if value == nil then
 		return fallback or 0
 	end
 	return value
@@ -432,10 +445,118 @@ function API:UpdateCornerWidgets(button, entry, ensureTexture)
 	end
 end
 
+local itemButtonCallbacks = {}
+local junkDefs = {} -- array
+local junkByKey = {}
+
+-- ---------------------------------------------------------------------------
+-- Junk detectors (Dejunk / Scrap / SellJunk-style third-party junk overlays)
+-- ---------------------------------------------------------------------------
+
+--- Register a junk detector. `def`:
+---   key    (string, required, unique)
+---   isJunk (function(bag, slot, entry) -> boolean, required)
+---   source (string, optional) - owning plugin display name
+function API:RegisterJunkDetector(def)
+	if type(def) ~= "table" or type(def.key) ~= "string" or def.key == "" then
+		F.Print("|cffff5555API:|r RegisterJunkDetector needs a unique string 'key'.")
+		return false
+	end
+	if type(def.isJunk) ~= "function" then
+		F.Print(format("|cffff5555API:|r junk detector '%s' needs an 'isJunk' function.", def.key))
+		return false
+	end
+
+	local existing = junkByKey[def.key]
+	if existing then
+		def._seq = existing._seq
+		for i = 1, #junkDefs do
+			if junkDefs[i] == existing then
+				junkDefs[i] = def
+				break
+			end
+		end
+	else
+		registerSeq = registerSeq + 1
+		def._seq = registerSeq
+		junkDefs[#junkDefs + 1] = def
+	end
+	junkByKey[def.key] = def
+
+	local src = EnsureSource(DeriveSource(def))
+	def._source = src.key
+	src.junk = src.junk or {}
+	src.junk[def.key] = true
+
+	if ns.db then
+		ScheduleButtonRefresh()
+	end
+	return true
+end
+
+--- Remove a junk detector registered by `key` (plugin / JunkPlugins OnDisable).
+function API:UnregisterJunkDetector(key)
+	if type(key) ~= "string" or key == "" then
+		return false
+	end
+	local existing = junkByKey[key]
+	if not existing then
+		return false
+	end
+	junkByKey[key] = nil
+	for i = #junkDefs, 1, -1 do
+		if junkDefs[i] == existing or (junkDefs[i] and junkDefs[i].key == key) then
+			table.remove(junkDefs, i)
+		end
+	end
+	if existing._source then
+		local src = sources and sources[existing._source]
+		if src and src.junk then
+			src.junk[key] = nil
+		end
+	end
+	if ns.db then
+		ScheduleButtonRefresh()
+	end
+	return true
+end
+
+--- Whether `entry` should show the junk coin (built-in grey/custom junk + plugins).
+function API:IsItemJunk(entry)
+	if not entry then
+		return false
+	end
+	local id = entry.itemID
+	if not id then
+		return false
+	end
+	local categories = ns:GetModule("Categories")
+	if categories and categories.IsPetTrashItem and categories:IsPetTrashItem(id) then
+		return false
+	end
+	local junkList = ns.global and ns.global.customJunk
+	if junkList and junkList[id] then
+		return true
+	end
+	local quality = entry.quality
+	if quality == 0 and not entry.noValue then
+		return true
+	end
+	for i = 1, #junkDefs do
+		local def = junkDefs[i]
+		if self:IsSourceEnabled(def._source) then
+			local ok, res = pcall(def.isJunk, entry.bag, entry.slot, entry)
+			if ok and res then
+				return true
+			end
+		end
+	end
+	return false
+end
+
 -- ---------------------------------------------------------------------------
 -- Item button callbacks (full-button overlays, e.g. TransmogLootHelper)
 -- ---------------------------------------------------------------------------
-local itemButtonCallbacks = {}
 
 --- Register a callback invoked whenever a bag item button is populated or cleared.
 --- `func(button, bagID, slotID, entry)` — entry is nil when the slot is empty.
@@ -459,10 +580,34 @@ function API:RegisterItemButtonCallback(key, func)
 	return true
 end
 
+--- Remove a previously registered item-button overlay callback.
+function API:UnregisterItemButtonCallback(key)
+	if type(key) ~= "string" or key == "" then
+		return false
+	end
+	for i = #itemButtonCallbacks, 1, -1 do
+		if itemButtonCallbacks[i].key == key then
+			table.remove(itemButtonCallbacks, i)
+			return true
+		end
+	end
+	return false
+end
+
 --- Ask Bagforge to redraw visible item buttons (display-only; no rescan).
-function API:RequestItemButtonsRefresh()
-	if ns.RefreshBags then
-		ns:RefreshBags(false)
+--- Optional `reason` mirrors Baganator RefreshReason / ns.C.RefreshReason:
+---   paint | headers | layout | reclassify | chrome (default paint, debounced).
+function API:RequestItemButtonsRefresh(reason)
+	local paint = (ns.C and ns.C.RefreshReason and ns.C.RefreshReason.paint) or "paint"
+	reason = reason or paint
+	if reason == paint then
+		ScheduleButtonRefresh()
+		return
+	end
+	if ns.UIRefresh then
+		ns:UIRefresh({ [reason] = true })
+	else
+		ScheduleButtonRefresh()
 	end
 end
 
@@ -480,32 +625,51 @@ end
 -- Introspection (settings Plugins page)
 -- ---------------------------------------------------------------------------
 function API:HasPlugins()
-	return #sourceOrder > 0
+	for i = 1, #sourceOrder do
+		local src = sources[sourceOrder[i]]
+		if src and (next(src.categories) or next(src.sorts) or (src.junk and next(src.junk))) then
+			return true
+		end
+	end
+	return false
 end
 
 --- Snapshot of installed plugin sources for the settings page. Each entry:
 ---   { key, name, enabled, categories = { sorted names }, sorts = { sorted labels } }
+--- Corner widgets and item-button callbacks do not create Plugins entries.
 function API:GetSources()
 	local out = {}
 	for i = 1, #sourceOrder do
 		local src = sources[sourceOrder[i]]
 		if src then
-			local cats, srt = {}, {}
+			local cats, srt, junk = {}, {}, {}
 			for _, name in pairs(src.categories) do
 				cats[#cats + 1] = name
 			end
 			for _, label in pairs(src.sorts) do
 				srt[#srt + 1] = label
 			end
-			tsort(cats)
-			tsort(srt)
-			out[#out + 1] = {
-				key = src.key,
-				name = src.name,
-				enabled = self:IsSourceEnabled(src.key),
-				categories = cats,
-				sorts = srt,
-			}
+			if src.junk then
+				for key in pairs(src.junk) do
+					junk[#junk + 1] = key
+				end
+			end
+			if #cats == 0 and #srt == 0 and #junk == 0 then
+				-- Overlay-only registrations (e.g. built-in Pawn arrows) belong on
+				-- Item Display, not the Plugins source toggle list.
+			else
+				tsort(cats)
+				tsort(srt)
+				tsort(junk)
+				out[#out + 1] = {
+					key = src.key,
+					name = src.name,
+					enabled = self:IsSourceEnabled(src.key),
+					categories = cats,
+					sorts = srt,
+					junk = junk,
+				}
+			end
 		end
 	end
 	return out

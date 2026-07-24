@@ -15,6 +15,7 @@
 --]]
 
 local _, ns = ...
+local F = ns.F
 
 local CreateFrame = CreateFrame
 local PanelTemplates_TabResize = PanelTemplates_TabResize
@@ -66,8 +67,7 @@ function Tabs.Create(parent)
 	frame:SetHeight(32)
 	-- Sit a level below the parent so each tab's top edge tucks under the window
 	-- border (the classic Blizzard tab look).
-	local level = parent:GetFrameLevel()
-	frame:SetFrameLevel(level > 0 and level - 1 or 0)
+	frame:SetFrameLevel(F.ClampFrameLevel(parent:GetFrameLevel() - 1))
 	self.frame = frame
 
 	return self

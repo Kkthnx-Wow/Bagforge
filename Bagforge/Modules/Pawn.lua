@@ -10,10 +10,16 @@
 	job is purely display: publish a checker as `ns.PawnIsUpgrade`, which the
 	item button reads while it's painting each slot, and force a redraw whenever
 	the answer might change (Pawn loads, gear swaps, scales change).
+
+	Pawn's upgrade APIs exist at file load but return errors until PawnIsReady()
+	(PLAYER_LOGIN init). Never call them before ready — see Pawn.lua
+	PawnShouldItemLinkHaveUpgradeArrowUnbudgeted and PawnIsReady().
 --]]
 
 local _, ns = ...
 local F, L = ns.F, ns.L
+
+local C_Timer = C_Timer
 
 ns:RegisterDefaults({
 	pawn = {
@@ -34,12 +40,50 @@ local function PawnAvailable()
 	return type(_G["PawnShouldItemLinkHaveUpgradeArrow"]) == "function" or type(_G["PawnShouldItemLinkHaveUpgradeArrowUnbudgeted"]) == "function"
 end
 
+--- Pawn exposes PawnIsReady() once its PLAYER_LOGIN init finishes. The arrow
+--- APIs are defined earlier but VgerCore.Fail if called too soon.
+local function PawnReady()
+	local ready = _G["PawnIsReady"]
+	return type(ready) == "function" and ready()
+end
+
+local readyRetryTimer
+
+--- One trailing poll until Pawn finishes init, then Apply() once.
+local function ScheduleReadyRetry()
+	if readyRetryTimer or not PawnAvailable() or not (ns.db and ns.db.pawn.enable) then
+		return
+	end
+	readyRetryTimer = C_Timer.NewTimer(0.25, function()
+		readyRetryTimer = nil
+		if not PawnReady() then
+			ScheduleReadyRetry()
+			return
+		end
+		Pawn:Apply()
+	end)
+end
+
+local function CancelReadyRetry()
+	if readyRetryTimer and readyRetryTimer.Cancel then
+		readyRetryTimer:Cancel()
+	end
+	readyRetryTimer = nil
+end
+
 -- Coalesce Pawn's "ask again later" answers into a single deferred repaint: when
 -- Pawn returns nil it has throttled itself for this frame, so we schedule one
 -- redraw and re-ask on the next paint (PawnBags.lua's RetryButtonsNeedingUpdate
 -- pattern). Self-terminating - once every visible item resolves it's cached, so
 -- nothing nils and the retry stops firing.
 local scheduleRetry = F.DebounceNoArgs(0.15, function()
+	if not PawnReady() then
+		return
+	end
+	if ns.Scan and ns.Scan.RefreshDisplayFieldsAll then
+		ns.Scan.RefreshDisplayFieldsAll()
+		return
+	end
 	ns:RefreshBags(false)
 end)
 
@@ -53,11 +97,15 @@ end)
 local resultCache = {}
 
 --- Returns true only when Pawn positively reports `link` as an upgrade.
---- Secret-guarded (item links can be secret in instances/combat) and pcall'd so
---- a Pawn-side error can never break a bag draw. Resolved answers are cached; a
+--- Pawn is pcall'd so a Pawn-side error can never break a bag draw. Resolved answers are cached; a
 --- nil answer (throttled) holds the arrow hidden for now and queues a retry.
 function Pawn:IsUpgrade(link)
-	if not link or F.IsSecret(link) then
+	if not link then
+		return false
+	end
+
+	if not PawnReady() then
+		ScheduleReadyRetry()
 		return false
 	end
 
@@ -86,7 +134,10 @@ function Pawn:IsUpgrade(link)
 	local unbudgeted = _G["PawnShouldItemLinkHaveUpgradeArrowUnbudgeted"]
 	if unbudgeted then
 		local ok, result = pcall(unbudgeted, link, true)
-		local up = ok and result == true
+		if not ok then
+			return false
+		end
+		local up = result == true
 		resultCache[link] = up
 		return up
 	end
@@ -120,25 +171,23 @@ function Pawn:Apply()
 		ns.PawnIsUpgrade = function(link)
 			return Pawn:IsUpgrade(link)
 		end
-		if ns.API and ns.API.RegisterCornerWidget and not Pawn._cornerRegistered then
-			Pawn._cornerRegistered = ns.API:RegisterCornerWidget({
-				key = "pawn.upgrade",
-				source = "Pawn",
-				corner = "center",
-				priority = 10,
-				update = function(_, entry)
-					if not entry or not entry.hyperlink then
-						return false
-					end
-					return Pawn:IsUpgrade(entry.hyperlink), "bags-greenarrow", 20, 22
-				end,
-			})
-		end
 	else
 		ns.PawnIsUpgrade = nil
 	end
+
+	if not PawnReady() then
+		ScheduleReadyRetry()
+		return
+	end
+
+	CancelReadyRetry()
+
 	-- Repaint open windows from current data (no rescan: only the arrow state
 	-- changed). The shared coordinator redraws the backpack and nudges the bank.
+	if ns.Scan and ns.Scan.RefreshDisplayFieldsAll then
+		ns.Scan.RefreshDisplayFieldsAll()
+		return
+	end
 	ns:RefreshBags(false)
 end
 
@@ -171,6 +220,7 @@ function Pawn:OnEnable()
 end
 
 function Pawn:OnDisable()
+	CancelReadyRetry()
 	if self._equipHandler then
 		ns:UnregisterEvent("PLAYER_EQUIPMENT_CHANGED", self._equipHandler)
 		self._equipHandler = nil

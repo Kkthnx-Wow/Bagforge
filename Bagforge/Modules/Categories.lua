@@ -19,6 +19,7 @@
 local _, ns = ...
 local C, L, F = ns.C, ns.L, ns.F
 
+local select = select
 local next = next
 local ipairs = ipairs
 local format = string.format
@@ -75,7 +76,6 @@ ns:RegisterDefaults({
 		quest = true, -- quest items
 		anima = false, -- Shadowlands anima
 		decor = true, -- housing decor
-		petTrashExempt = true, -- grey pet-battle vendor currencies (NDui PetTrash)
 	},
 })
 
@@ -102,31 +102,6 @@ local CATEGORY_LEGACY = L["Legacy"]
 local CATEGORY_LOWER = L["Lower Level"]
 local CATEGORY_JUNK = L["Junk"]
 local CATEGORY_OTHER = L["Other"]
-
--- Grey items used as pet-battle vendor currency (NDui petTrashCurrenies).
-local PET_TRASH_ITEM_IDS = {
-	[3300] = true,
-	[3670] = true,
-	[6150] = true,
-	[11406] = true,
-	[11944] = true,
-	[25402] = true,
-	[36812] = true,
-	[62072] = true,
-	[67410] = true,
-}
-
-local function IsPetTrashItem(itemID)
-	local f = ns.db and ns.db.filters
-	if not (f and f.petTrashExempt) then
-		return false
-	end
-	return itemID and PET_TRASH_ITEM_IDS[itemID]
-end
-
-function Categories:IsPetTrashItem(itemID)
-	return IsPetTrashItem(itemID)
-end
 
 -- Display order of each category panel (lower = drawn first). File-local so it
 -- doesn't collide with `Categories.order`, the module's options-sort weight.
@@ -164,10 +139,9 @@ local CUSTOM_CATEGORY_ORDER = 4
 --   the set of distinct items a player touches is small and bounded in practice.
 -- ---------------------------------------------------------------------------
 local propCache = {}
-local PROP_CACHE_LIMIT = 800
 
 local function GetProps(itemID)
-	if not itemID then
+	if not itemID or F.IsSecret(itemID) then
 		return nil
 	end
 	local p = propCache[itemID]
@@ -176,7 +150,7 @@ local function GetProps(itemID)
 		p.anima = C_Item.IsAnimaItemByID and C_Item.IsAnimaItemByID(itemID) or false
 		p.decor = C_Item.IsDecorItem and C_Item.IsDecorItem(itemID) or false
 		p.azerite = C_AzeriteEmpoweredItem and C_AzeriteEmpoweredItem.IsAzeriteEmpoweredItemByID and C_AzeriteEmpoweredItem.IsAzeriteEmpoweredItemByID(itemID) or false
-		F.CacheSet(propCache, itemID, p, PROP_CACHE_LIMIT)
+		propCache[itemID] = p
 	end
 
 	-- Toy: tri-state nil = unknown, true/false = resolved once C_ToyBox has data.
@@ -185,7 +159,7 @@ local function GetProps(itemID)
 			local toyInfo = C_ToyBox.GetToyInfo(itemID)
 			if toyInfo ~= nil then
 				p.toy = true
-			elseif F.GetItemInfoRecord(itemID) then
+			elseif C_Item.GetItemInfo(itemID) then
 				p.toy = false
 			end
 		else
@@ -195,10 +169,9 @@ local function GetProps(itemID)
 
 	-- expacID for legacy/lower filters; only finalise once GetItemInfo returns.
 	if p.expacID == nil then
-		local info = F.GetItemInfoRecord(itemID)
-		local expac = info and info.expansionID
-		if expac ~= nil then
-			p.expacID = expac
+		local _, _, _, _, _, _, _, _, _, _, _, _, _, _, expacID = C_Item.GetItemInfo(itemID)
+		if expacID ~= nil and F.NotSecret(expacID) then
+			p.expacID = expacID
 		end
 	end
 
@@ -220,14 +193,13 @@ primordialStones[203703] = true -- Primordial Stones (Onyx Annulet shard)
 -- Detection helpers (entry fields come from Items:Scan)
 -- ---------------------------------------------------------------------------
 local function IsGearClass(entry)
-	local classID = entry.classID
-	return classID == ITEM_CLASS.Weapon or classID == ITEM_CLASS.Armor
+	return entry.classID == ITEM_CLASS.Weapon or entry.classID == ITEM_CLASS.Armor
 end
 
 -- NDui's CheckEquip: real gear above common quality (poor gear is junk first).
 local function IsUpgradeGear(entry)
 	local q = entry.quality
-	return IsGearClass(entry) and q ~= nil and q > ITEM_QUALITY.Common
+	return IsGearClass(entry) and F.NotSecret(q) and q > ITEM_QUALITY.Common
 end
 
 -- Effective item level, only computed for the legacy/lower filters that need it.
@@ -236,18 +208,16 @@ local function GearItemLevel(entry)
 end
 
 local function IsJunk(entry)
-	if IsPetTrashItem(entry.itemID) then
-		return false
-	end
 	local q = entry.quality
-	if q == ITEM_QUALITY.Poor then
+	if F.NotSecret(q) and q == ITEM_QUALITY.Poor then
 		return true
 	end
-	-- Custom junk (Modules/Organize): items the player flagged are grouped here too.
+	-- Custom junk (Modules/Organize): items the player flagged are grouped here
+	-- too. itemID is the table key, so guard against a secret value first.
 	local junk = ns.global and ns.global.customJunk
 	if junk then
 		local id = entry.itemID
-		if id and junk[id] then
+		if id and F.NotSecret(id) and junk[id] then
 			return true
 		end
 	end
@@ -255,24 +225,15 @@ local function IsJunk(entry)
 end
 
 local function IsConsumable(entry)
-	local classID = entry.classID
-	return classID == ITEM_CLASS.Consumable or classID == ITEM_CLASS.ItemEnhancement
+	return entry.classID == ITEM_CLASS.Consumable or entry.classID == ITEM_CLASS.ItemEnhancement
 end
 
 local function IsTradeGood(entry)
-	local classID = entry.classID
-	return classID == ITEM_CLASS.Tradegoods or (ITEM_CLASS.Reagent and classID == ITEM_CLASS.Reagent)
+	return entry.classID == ITEM_CLASS.Tradegoods or (ITEM_CLASS.Reagent and entry.classID == ITEM_CLASS.Reagent)
 end
 
 local function IsQuestItem(entry)
-	if entry.quest then
-		return true
-	end
-	if entry.questID ~= nil then
-		return true
-	end
-	local classID = entry.classID
-	return classID == ITEM_CLASS.Questitem
+	return entry.quest or entry.questID ~= nil or entry.classID == ITEM_CLASS.Questitem
 end
 
 local function IsCollection(entry)
@@ -280,9 +241,8 @@ local function IsCollection(entry)
 	if p and p.toy then
 		return true
 	end
-	local classID = entry.classID
-	local subClassID = entry.subClassID
-	return classID == ITEM_CLASS.Miscellaneous and subClassID and (subClassID == MISC_SUBCLASS.Mount or subClassID == MISC_SUBCLASS.CompanionPet)
+	-- Mounts and battle pets are Miscellaneous items with a specific subclass.
+	return entry.classID == ITEM_CLASS.Miscellaneous and entry.subClassID and (entry.subClassID == MISC_SUBCLASS.Mount or entry.subClassID == MISC_SUBCLASS.CompanionPet)
 end
 
 local function IsWarbound(entry)
@@ -305,7 +265,7 @@ local function IsWarbound(entry)
 				local line = data.lines[i]
 				if line.type == LINE_ITEM_BINDING then
 					local bonding = line.bonding
-					if bonding == BIND.AccountUntilEquipped or bonding == BIND.BindToAccountUntilEquipped then
+					if F.NotSecret(bonding) and (bonding == BIND.AccountUntilEquipped or bonding == BIND.BindToAccountUntilEquipped) then
 						entry.bindLabel = "WuE"
 						return true
 					end
@@ -317,11 +277,9 @@ local function IsWarbound(entry)
 		end
 	end
 	-- Last resort: GetItemInfo bindType (covers clients without C_TooltipInfo).
-	if ITEM_BIND and entry.itemID and C_Item and C_Item.GetItemInfo then
-		local info = (entry.hyperlink and F.GetItemInfoRecord(entry.hyperlink))
-			or F.GetItemInfoRecord(entry.itemID)
-		local bindType = info and info.bindType
-		if bindType ~= nil then
+	if ITEM_BIND and entry.hyperlink and not F.IsSecret(entry.hyperlink) and C_Item and C_Item.GetItemInfo then
+		local bindType = select(14, C_Item.GetItemInfo(entry.hyperlink))
+		if bindType ~= nil and F.NotSecret(bindType) then
 			if bindType == ITEM_BIND.ToBnetAccountUntilEquipped then
 				entry.bindLabel = "WuE"
 				return true
@@ -340,7 +298,7 @@ end
 -- NDui's FilterLegendary: any legendary-quality item (orange).
 local function IsLegendary(entry)
 	local q = entry.quality
-	return q == ITEM_QUALITY.Legendary
+	return F.NotSecret(q) and q == ITEM_QUALITY.Legendary
 end
 
 local function IsAnima(entry)
@@ -355,19 +313,15 @@ end
 
 local function IsPrimordialStone(entry)
 	local id = entry.itemID
-	return id and primordialStones[id]
+	return id and F.NotSecret(id) and primordialStones[id]
 end
 
 local function IsLegacy(entry)
 	if not IsUpgradeGear(entry) then
 		return false
 	end
-	local expacID = entry.expacID
-	if expacID == nil then
-		local p = GetProps(entry.itemID)
-		expacID = p and p.expacID
-	end
-	return expacID ~= nil and expacID < CURRENT_EXPANSION
+	local p = GetProps(entry.itemID)
+	return p and F.NotSecret(p.expacID) and p.expacID < CURRENT_EXPANSION
 end
 
 local function IsLowerLevel(entry, threshold)
@@ -375,7 +329,7 @@ local function IsLowerLevel(entry, threshold)
 		return false
 	end
 	local ilvl = GearItemLevel(entry)
-	return ilvl ~= nil and ilvl < (threshold or 1)
+	return F.NotSecret(ilvl) and ilvl < (threshold or 1)
 end
 
 -- ---------------------------------------------------------------------------
@@ -409,7 +363,7 @@ local function GetCustomCategory(entry)
 		return nil
 	end
 	local id = entry.itemID
-	if not id then
+	if not id or F.IsSecret(id) then
 		return nil
 	end
 	return o.assignments[id]
@@ -424,16 +378,15 @@ end
 -- key, remember which search won so duplicate stacks don't re-run every query.
 -- Cleared when saved searches change (Search.Invalidate -> InvalidateSearchCache).
 local searchWinnerCache = {}
-local searchRejectCache = {}
 local sortedSearches
 
 local function ItemSearchKey(entry)
 	local link = entry.hyperlink
-	if link then
+	if link and F.NotSecret(link) then
 		return link
 	end
 	local id = entry.itemID
-	if id then
+	if id and F.NotSecret(id) then
 		return "id:" .. tostring(id)
 	end
 	return nil
@@ -441,21 +394,7 @@ end
 
 function Categories:InvalidateSearchCache()
 	wipe(searchWinnerCache)
-	wipe(searchRejectCache)
 	sortedSearches = nil
-end
-
-function Categories:InvalidateItemProps(itemID)
-	if itemID then
-		propCache[itemID] = nil
-	end
-	-- Winner/reject keys are usually hyperlinks, not id:N — wipe both so late
-	-- GET_ITEM_INFO_RECEIVED can re-match saved searches after name/type loads.
-	wipe(searchWinnerCache)
-	wipe(searchRejectCache)
-	if ns.Search and ns.Search.InvalidateTooltips then
-		ns.Search.InvalidateTooltips()
-	end
 end
 
 local function GetSortedSearches()
@@ -486,22 +425,15 @@ local function GetSortedSearches()
 end
 
 local function QualityLabel(quality)
-	if quality == nil then
+	if quality == nil or F.IsSecret(quality) then
 		return nil
 	end
 	local label = _G["ITEM_QUALITY" .. quality .. "_DESC"]
 	return label or format(L["Quality %d"], quality)
 end
 
-local function EntryString(value)
-	if not value then
-		return nil
-	end
-	return value
-end
-
 local function SlotLabel(entry)
-	local loc = EntryString(entry.itemEquipLoc)
+	local loc = entry.itemEquipLoc
 	if not loc or loc == "" then
 		return nil
 	end
@@ -517,9 +449,9 @@ end
 
 local function GroupSuffix(entry, groupBy)
 	if groupBy == "type" then
-		return EntryString(entry.itemType)
+		return entry.itemType
 	elseif groupBy == "subtype" then
-		return EntryString(entry.itemSubType)
+		return entry.itemSubType
 	elseif groupBy == "expansion" then
 		return ExpansionName(entry.expacID)
 	elseif groupBy == "quality" then
@@ -560,25 +492,24 @@ local function GetSearchCategory(entry)
 	if cachedBestName and o.searches[cachedBestName] then
 		return ApplyGroupFromDef(cachedBestName, entry, o.searches[cachedBestName])
 	end
-	if key and searchRejectCache[key] then
+
+	local bestName, bestOrder
+	for name, def in pairs(o.searches) do
+		if def.enabled ~= false and def.query and def.query ~= "" and Search.Match(def.query, entry) then
+			local ord = def.order or CUSTOM_CATEGORY_ORDER
+			if not bestName or ord < bestOrder or (ord == bestOrder and name < bestName) then
+				bestName, bestOrder = name, ord
+			end
+		end
+	end
+	if not bestName then
 		return nil
 	end
 
-	local sorted = GetSortedSearches()
-	for i = 1, #sorted do
-		local row = sorted[i]
-		if Search.Match(row.def.query, entry) then
-			if key then
-				searchWinnerCache[key] = row.name
-			end
-			return ApplyGroupFromDef(row.name, entry, row.def)
-		end
-	end
-
 	if key then
-		searchRejectCache[key] = true
+		searchWinnerCache[key] = bestName
 	end
-	return nil
+	return ApplyGroupFromDef(bestName, entry, o.searches[bestName])
 end
 
 function Categories:GetCategory(entry)
@@ -636,13 +567,10 @@ function Categories:GetCategory(entry)
 	if f.recent and entry.isNewItem then
 		return CATEGORY_RECENT
 	end
-	if f.petTrashExempt and IsPetTrashItem(entry.itemID) and f.collection then
-		return CATEGORY_COLLECTION
-	end
 	if f.junk and IsJunk(entry) then
 		return CATEGORY_JUNK
 	end
-	if f.equipSet and entry.isInSet == true then
+	if f.equipSet and entry.isInSet then
 		return CATEGORY_EQUIPSET
 	end
 	if f.warbound and IsWarbound(entry) then
@@ -809,7 +737,7 @@ function Categories:HandleCommand(arg)
 		if num then
 			f.minItemLevel = num
 			F.Print(format(L["Lower level threshold set to %d."], num))
-			ns:ReclassifyBags()
+			ns:RefreshBags(true)
 		else
 			F.Print(L["Usage: /bf filter ilvl <number>"])
 		end
@@ -833,17 +761,13 @@ function Categories:HandleCommand(arg)
 	local state = f[canonical] and L["on"] or L["off"]
 	F.Print(format(L["Filter %s is now %s."], canonical, state))
 
-	ns:ReclassifyBags()
+	ns:RefreshBags(true)
 end
 
 -- ---------------------------------------------------------------------------
 -- Lifecycle
 -- ---------------------------------------------------------------------------
 function Categories:OnEnable()
-	wipe(propCache)
-	if ns.Scan and ns.Scan.ClearItemCaches then
-		ns.Scan.ClearItemCaches()
-	end
 	if self._pewHandler then
 		return
 	end
@@ -863,16 +787,15 @@ function Categories:OnDisable()
 		ns:UnregisterEvent("PLAYER_ENTERING_WORLD", self._pewHandler)
 		self._pewHandler = nil
 	end
-	self:InvalidateSearchCache()
-	wipe(propCache)
 end
 
 -- ---------------------------------------------------------------------------
 -- Settings panel (each filter is a live checkbox; rebuild on change)
 -- ---------------------------------------------------------------------------
---- Re-classify and redraw whenever any filter toggle changes.
+--- Re-classify and redraw whenever any filter toggle changes. A filter changes
+--- item *membership*, so this rescans (true) rather than just repainting.
 function Categories:OnSettingChanged()
-	ns:ReclassifyBags()
+	ns:RefreshBags(true)
 end
 
 function Categories:RegisterOptions(category, builder)
@@ -887,7 +810,6 @@ function Categories:RegisterOptions(category, builder)
 
 	Filter("recent", L["Recent Items"], L["Group items flagged as newly looted."])
 	Filter("junk", L["Junk"], L["Group poor-quality (grey) items."])
-	Filter("petTrashExempt", L["Pet Trash Currencies"], L["Keep grey pet-battle vendor items out of Junk and auto-sell; group them under Collections instead."])
 	Filter("equipSet", L["Equipment Sets"], L["Group items that belong to an equipment set."])
 	Filter("warbound", L["Warbound Until Equipped"], L["Group account-bound-until-equipped items."])
 	Filter("azerite", L["Azerite Armor"], L["Group Azerite-empowered armor."])
@@ -902,7 +824,7 @@ function Categories:RegisterOptions(category, builder)
 	Filter("primordialStone", L["Primordial Stones"], L["Group Dragonflight primordial stones."])
 	Filter("legacy", L["Legacy"], L["Group gear from previous expansions."])
 
-	local lowerInit = Filter("lowerLevel", L["Lower Level"], L["Group gear below the item-level threshold set below."])
+	local lowerInit = Filter("lowerLevel", L["Lower Level"], L["Group gear below the item-level threshold below."])
 	local _, ilvlInit = builder:Slider(category, self, "minItemLevel", L["Lower Level Threshold"], L["Gear under this item level is grouped as Lower Level."], 1, 800, 1)
 	builder:DependsOn(ilvlInit, lowerInit)
 end

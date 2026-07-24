@@ -534,9 +534,3 @@ function Manager:Toggle()
 		self:Refresh()
 	end
 end
-
-function Manager:OnDisable()
-	if self.frame and self.frame:IsShown() then
-		self.frame:Hide()
-	end
-end

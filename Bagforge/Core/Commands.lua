@@ -73,13 +73,7 @@ local exactCommands = {
 	resetbank = function()
 		local bank = ns:GetModule("Bank")
 		if bank then
-			bank:ResetPosition("active")
-		end
-	end,
-	resetwarbank = function()
-		local bank = ns:GetModule("Bank")
-		if bank then
-			bank:ResetPosition("warband")
+			bank:ResetPosition()
 		end
 	end,
 	config = function()
@@ -120,9 +114,9 @@ local commandAliases = {
 	depositwarbandbank = "depositwarbank",
 	resetpos = "reset",
 	bankreset = "resetbank",
-	resetwarbank = "resetwarbank",
-	warbankreset = "resetwarbank",
-	resetwarbandbank = "resetwarbank",
+	resetwarbank = "resetbank",
+	warbankreset = "resetbank",
+	resetwarbandbank = "resetbank",
 	options = "config",
 }
 for alias, target in pairs(commandAliases) do

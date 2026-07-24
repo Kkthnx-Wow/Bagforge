@@ -59,21 +59,6 @@ C.Colors = {
 	brand = { 0.99, 0.61, 0.13 }, -- #FD9B20 forge amber
 }
 
--- Narrow UI refresh contracts (Baganator RefreshReason / RefreshZone pattern).
-C.RefreshReason = {
-	paint = "paint",
-	headers = "headers",
-	layout = "layout",
-	reclassify = "reclassify",
-	chrome = "chrome",
-}
-
-C.RefreshZone = {
-	backpack = "backpack",
-	bank = "bank",
-	all = "all",
-}
-
 -- ---------------------------------------------------------------------------
 -- Bag indices
 --   Enum.BagIndex gives us stable, patch-proof bag ids. The backpack set is
@@ -150,19 +135,15 @@ end
 
 -- ---------------------------------------------------------------------------
 -- Layout
---   Pixel numbers and default column/category counts. User-facing widths are
---   configurable in options; these are defaults and code fallbacks.
+--   Pixel numbers the backpack window uses. Tuned to feel like a modern bag
+--   without being configurable yet - that comes once the bones are solid.
 -- ---------------------------------------------------------------------------
 C.Layout = {
-	ITEM_SIZE = 37, -- width/height of one item button (default; per-view override in DB)
+	ITEM_SIZE = 37, -- width/height of one item button
 	ITEM_PADDING = 4, -- gap between item buttons
-	MIN_ICON_SIZE = 24, -- lower bound for the per-view icon-size slider
-	MAX_ICON_SIZE = 64, -- upper bound for the per-view icon-size slider
-	COLUMNS = 12, -- backpack item columns (BagsWidth)
-	BANK_COLUMNS = 14, -- character bank item columns (BankWidth)
-	WARBAND_COLUMNS = 20, -- warband bank item columns (AccountWidth)
+	COLUMNS = 12, -- items per row
 	MIN_COLUMNS = 6,
-	MAX_COLUMNS = 40,
+	MAX_COLUMNS = 18,
 
 	-- Per-category panel (the cargBags-style "container"). Each category is its
 	-- own SettingsFrameTemplate frame; these numbers govern that panel.
@@ -199,11 +180,8 @@ C.Layout = {
 	WARBAND_FOOTER_OFFSET_Y = 8,
 	WARBAND_MONEY_ROW_HEIGHT = 24,
 	WARBAND_FOOTER_HEIGHT = 32,
-	-- Category panels per vertical column before wrapping left (BagsPerRow / BankPerRow).
-	BACKPACK_CATEGORIES_PER_COLUMN = 6,
-	BANK_CATEGORIES_PER_COLUMN = 10,
-	-- Generic fallback when a caller omits perColumn (matches backpack default).
-	DEFAULT_CATEGORIES_PER_COLUMN = 6,
+	-- wrap into a new column to the left once a column holds this many panels.
+	DEFAULT_CATEGORIES_PER_COLUMN = 5,
 	MIN_CATEGORIES_PER_COLUMN = 1,
 	MAX_CATEGORIES_PER_COLUMN = 12,
 	-- Bank panels: place item buttons in chunks per frame to avoid open hitch.
@@ -233,11 +211,6 @@ function C.EstimateItemButtonPoolSize()
 	end
 	for _, bag in ipairs(C.CHARACTER_BANK_BAGS) do
 		total = total + (C_Container.GetContainerNumSlots(bag) or 98)
-	end
-	if C.ACCOUNT_BANK_BAGS then
-		for _, bag in ipairs(C.ACCOUNT_BANK_BAGS) do
-			total = total + (C_Container.GetContainerNumSlots(bag) or 98)
-		end
 	end
 	local floor = C.Layout.ITEM_BUTTON_POOL_PREWARM or 400
 	local cap = C.Layout.ITEM_BUTTON_POOL_MAX or 900

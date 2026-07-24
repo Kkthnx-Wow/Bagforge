@@ -20,7 +20,8 @@
 	if the guild bank can't actually cover the bill we catch the error and fall
 	back to personal funds (NDui's UI_ERROR_MESSAGE pattern).
 
-	Merchant interactions happen out of combat, so there's no taint/lockdown concern.
+	Merchant interactions happen out of combat, so there's no taint/lockdown
+	concern; money/quality/itemID values are still secret-guarded defensively.
 
 	Transient listeners (UI_ERROR_MESSAGE, MERCHANT_CLOSED) are registered only
 	while a sell/repair is in flight and torn down afterwards, so the addon
@@ -32,7 +33,9 @@ local C, F, L = ns.C, ns.F, ns.L
 
 local format = string.format
 local ipairs = ipairs
+local select = select
 local wipe = wipe
+local C_Item = C_Item
 local C_Container = C_Container
 local C_MerchantFrame = C_MerchantFrame
 local C_Timer_After = C_Timer.After
@@ -73,7 +76,6 @@ Vendor.group = "extras"
 -- Selling (throttled sweep)
 -- ---------------------------------------------------------------------------
 local StartSelling, SellStep, StopSelling, OnSellError, OnMerchantClosedSell
-local CancelGuildRepair
 
 local selling = false
 local sellCache = {} -- numeric bag/slot key -> already attempted this visit
@@ -85,22 +87,18 @@ local function ShouldSell(info, db)
 		return false
 	end
 	local id = info.itemID
-	if not id then
+	if not id or F.IsSecret(id) then
 		return false
 	end
 	local quality = info.quality
-	local isGrey = quality == 0
-	local categories = ns:GetModule("Categories")
-	if isGrey and categories and categories.IsPetTrashItem and categories:IsPetTrashItem(id) then
-		return false
-	end
+	local isGrey = F.NotSecret(quality) and quality == 0
 	local custom = db.autoSellCustomJunk and ns.global and ns.global.customJunk
 	local isCustom = custom and custom[id]
 	if not (isGrey or isCustom) then
 		return false
 	end
 	local price = ns.Scan and ns.Scan.GetSellPrice and ns.Scan.GetSellPrice(id)
-	return price and price > 0
+	return price and F.NotSecret(price) and price > 0
 end
 
 function StopSelling()
@@ -146,7 +144,6 @@ end
 
 function OnMerchantClosedSell()
 	StopSelling()
-	CancelGuildRepair()
 end
 
 function StartSelling(db)
@@ -171,11 +168,10 @@ end
 -- ---------------------------------------------------------------------------
 -- Repair (guild funds first, with a personal-funds fallback)
 -- ---------------------------------------------------------------------------
-local DoRepair, FinishGuildRepair, OnRepairError, OnMerchantClosedRepair
+local DoRepair, FinishGuildRepair, OnRepairError
 
 local guildRepairFailed = false
 local guildRepairCost = 0
-local guildRepairPending = false
 
 function OnRepairError(_, errorType)
 	if GUILD_NOT_ENOUGH and errorType == GUILD_NOT_ENOUGH then
@@ -183,32 +179,10 @@ function OnRepairError(_, errorType)
 	end
 end
 
-function OnMerchantClosedRepair()
-	CancelGuildRepair()
-end
-
-function CancelGuildRepair()
-	if not guildRepairPending then
-		return
-	end
-	guildRepairPending = false
-	ns:UnregisterEvent("UI_ERROR_MESSAGE", OnRepairError)
-	ns:UnregisterEvent("MERCHANT_CLOSED", OnMerchantClosedRepair)
-end
-
 -- 0.5s after a guild-repair attempt: if the bank couldn't cover it (error
 -- caught above), repair from personal funds instead; otherwise report success.
 function FinishGuildRepair()
 	ns:UnregisterEvent("UI_ERROR_MESSAGE", OnRepairError)
-	ns:UnregisterEvent("MERCHANT_CLOSED", OnMerchantClosedRepair)
-	if not guildRepairPending then
-		return
-	end
-	guildRepairPending = false
-	-- Merchant closed before the timer — don't spend personal gold as a "fallback".
-	if not (MerchantFrame and MerchantFrame:IsShown()) then
-		return
-	end
 	if guildRepairFailed then
 		DoRepair(true) -- override: skip the guild path, use our own money
 		return
@@ -216,7 +190,9 @@ function FinishGuildRepair()
 	if PlaySound and SOUNDKIT then
 		PlaySound(SOUNDKIT.ITEM_REPAIR)
 	end
-	F.Print(format(L["Repaired with guild funds (%s)."], F.FormatMoney(guildRepairCost)))
+	if F.NotSecret(guildRepairCost) then
+		F.Print(format(L["Repaired with guild funds (%s)."], F.FormatMoney(guildRepairCost)))
+	end
 end
 
 function DoRepair(override)
@@ -225,7 +201,8 @@ function DoRepair(override)
 	end
 
 	local cost, canRepair = GetRepairAllCost()
-	if not canRepair or not cost or cost <= 0 then
+	-- Midnight: cost can be a secret value; never compare it without a guard.
+	if not canRepair or not cost or F.IsSecret(cost) or cost <= 0 then
 		return
 	end
 
@@ -236,13 +213,10 @@ function DoRepair(override)
 	-- watching for the error, so arm the listener before the attempt.
 	if (not override) and db.useGuildFunds and CanGuildBankRepair and CanGuildBankRepair() then
 		local withdraw = GetGuildBankWithdrawMoney and GetGuildBankWithdrawMoney() or 0
-		if withdraw == -1 or withdraw >= cost then
-			CancelGuildRepair()
+		if F.NotSecret(withdraw) and (withdraw == -1 or withdraw >= cost) then
 			guildRepairFailed = false
 			guildRepairCost = cost
-			guildRepairPending = true
 			ns:RegisterEvent("UI_ERROR_MESSAGE", OnRepairError)
-			ns:RegisterEvent("MERCHANT_CLOSED", OnMerchantClosedRepair)
 			RepairAllItems(true)
 			C_Timer_After(0.5, FinishGuildRepair)
 			return
@@ -251,7 +225,7 @@ function DoRepair(override)
 
 	-- Personal funds.
 	local myMoney = GetMoney and GetMoney() or 0
-	if myMoney >= cost then
+	if F.NotSecret(myMoney) and myMoney >= cost then
 		RepairAllItems()
 		if PlaySound and SOUNDKIT then
 			PlaySound(SOUNDKIT.ITEM_REPAIR)
@@ -293,7 +267,6 @@ end
 
 function Vendor:OnDisable()
 	StopSelling()
-	CancelGuildRepair()
 	if self.merchantShowHandler then
 		ns:UnregisterEvent("MERCHANT_SHOW", self.merchantShowHandler)
 		self.merchantShowHandler = nil
@@ -303,7 +276,6 @@ end
 function Vendor:OnSettingChanged(key)
 	if key == "active" or key == "autoSellJunk" or key == "autoSellCustomJunk" then
 		StopSelling()
-		CancelGuildRepair()
 	end
 end
 

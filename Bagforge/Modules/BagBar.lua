@@ -6,11 +6,12 @@
 --]]
 
 local _, ns = ...
-local C, L = ns.C, ns.L
+local C, F, L = ns.C, ns.F, ns.L
 
 local CreateFrame = CreateFrame
 local InCombatLockdown = InCombatLockdown
 local C_Container = C_Container
+local ipairs = ipairs
 
 local GetInventoryItemTexture = GetInventoryItemTexture
 local GetInventoryItemQuality = GetInventoryItemQuality
@@ -41,20 +42,6 @@ local BAG_FILTER_ASSIGNED_TO = _G["BAG_FILTER_ASSIGNED_TO"]
 local BagIndex = Enum.BagIndex
 local BAG_SLOT_SIZE = 37
 local BAG_SLOT_GAP = 6
-
--- NDui bagTypeColor: tint equipped specialty bag slots on the bar.
-local SPECIAL_BAG_COLORS = {
-	[2] = { 0, 0.5, 0, 0.35 }, -- herb
-	[3] = { 0.8, 0, 0.8, 0.35 }, -- enchanting
-	[4] = { 1, 0.8, 0, 0.35 }, -- engineering
-	[5] = { 0, 0.8, 0.8, 0.35 }, -- gem
-	[6] = { 0.5, 0.4, 0, 0.35 }, -- mining
-	[7] = { 0.8, 0.5, 0.5, 0.35 }, -- leatherworking
-	[8] = { 0.8, 0.8, 0.8, 0.35 }, -- inscription
-	[9] = { 0.4, 0.6, 1, 0.35 }, -- tackle
-	[10] = { 0.8, 0, 0, 0.35 }, -- cooking
-	[11] = { 0.2, 0.8, 0.2, 0.35 }, -- reagent
-}
 
 local HELD_BAG_SLOTS = {}
 if BagIndex.ReagentBag then
@@ -307,11 +294,6 @@ function BagBar:CreateBagSlotButton(parent, bagID)
 	slotBG:Hide()
 	button.slotBG = slotBG
 
-	local typeTint = button:CreateTexture(nil, "BACKGROUND", nil, -5)
-	typeTint:SetAllPoints(button)
-	typeTint:Hide()
-	button.typeTint = typeTint
-
 	button.icon = _G[name .. "IconTexture"]
 
 	button:RegisterForDrag("LeftButton")
@@ -332,37 +314,21 @@ function BagBar:UpdateBagBar()
 	if self.bagBar and not self.bagBar:IsShown() then
 		return
 	end
-	local useColors = ns.db and ns.db.backpack and ns.db.backpack.specialBagColors
 	for i = 1, #self.bagButtons do
 		local button = self.bagButtons[i]
 		local icon = GetInventoryItemTexture("player", button.invID)
-		local typeTint = button.typeTint
 		if icon then
 			button.slotBG:Hide()
-			if useColors and typeTint and C_Container.GetBagType then
-				local bagType = C_Container.GetBagType(button.bagID)
-				local color = bagType and SPECIAL_BAG_COLORS[bagType]
-				if color then
-					typeTint:SetColorTexture(color[1], color[2], color[3], color[4])
-					typeTint:Show()
-				elseif typeTint then
-					typeTint:Hide()
-				end
-			elseif typeTint then
-				typeTint:Hide()
-			end
 		else
-			if typeTint then
-				typeTint:Hide()
-			end
 			button.slotBG:Show()
 		end
 		SetItemButtonTexture(button, icon)
 		local quality = GetInventoryItemQuality("player", button.invID)
-		SetItemButtonQuality(button, quality)
+		if F.NotSecret(quality) then
+			SetItemButtonQuality(button, quality)
+		end
 		SetItemButtonCount(button, 1)
-		local locked = IsInventoryItemLocked(button.invID)
-		SetItemButtonDesaturated(button, locked == true)
+		SetItemButtonDesaturated(button, IsInventoryItemLocked(button.invID))
 	end
 end
 

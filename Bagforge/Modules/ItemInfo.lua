@@ -8,28 +8,29 @@
 
 	The item button does the actual drawing; this module owns the data + toggles
 	and publishes small checkers the button reads while painting (the same shape
-	as the Pawn integration).
+	as the Pawn integration). The unusable/class-restriction logic is adapted
+	from NexEnhance's UnusableItems (itself from LibUnfit-1.0 via KkthnxUI), and
+	Bind labels are resolved at scan time via ItemInfo:GetBindLabel (NexEnhance/BlizzardBags_BoE idea).
 
-	Unusable tint follows the Bagnon/BagBrother stack (ItemSearch-1.3 + LibUnfit)
-	and KkthnxUI's bag buttons: class weapon/armor proficiency, explicit tooltip
-	class requirements (ITEM_CLASSES_ALLOWED), and itemMinLevel vs player level.
-	We do NOT use C_PlayerInfo.CanUseItem — it returns false for wrong primary
-	stats/spec gear you can still equip, which painted usable leather red.
-
-	Item metadata used here is plain data in the 12.0.7 API docs.
+	Class/level data can still become secret in combat (req level from GetItemInfo);
+	gate reads with F.IsSecret / F.CanAccessValue before compare or arithmetic.
+	Usability: C_PlayerInfo.CanUseItem when available, else LibUnfit class table +
+	required level (NexEnhance pattern). Tooltip red-line scanning was removed —
+	it false-flagged usable legacy gear (grey stats, comparison colours).
 --]]
 
 local _, ns = ...
 local F, L = ns.F, ns.L
 
+local select = select
 local UnitLevel = UnitLevel
 local UnitClassBase = UnitClassBase
 local C_Item = C_Item
+local C_Container = C_Container
 local C_TooltipInfo = C_TooltipInfo
+local C_PlayerInfo = C_PlayerInfo
 local Enum = Enum
 local pcall = pcall
-local IsItemDataCachedByID = C_Item and C_Item.IsItemDataCachedByID
-local IsEquippableItem = C_Item and C_Item.IsEquippableItem
 
 local LINE_ITEM_BINDING = Enum and Enum.TooltipDataLineType and Enum.TooltipDataLineType.ItemBinding
 local LINE_ITEM_LEVEL = Enum and Enum.TooltipDataLineType and Enum.TooltipDataLineType.ItemLevel
@@ -118,156 +119,60 @@ local function BuildUnusable()
 end
 
 -- ---------------------------------------------------------------------------
--- Usability (Bagnon ItemSearch-1.3 + LibUnfit-1.0 + KkthnxUI level gate).
---   1. LibUnfit class weapon/armor proficiency tables.
---   2. Tooltip "Classes: …" line (ITEM_CLASSES_ALLOWED) for restricted gear.
---   3. itemMinLevel > player level.
--- Does not use C_PlayerInfo.CanUseItem (stat/spec false negatives).
+-- Usability checks (bounded per-itemID caches; class/req-level never change).
 -- ---------------------------------------------------------------------------
-local unusableCache = {}
-local classReqCache = {}
+local classCache = {}
 local reqLevelCache = {}
-local classReqPattern
-local playerClassMale
-local playerClassFemale
-local INVTYPE_WEAPONOFFHAND = "INVTYPE_WEAPONOFFHAND"
-
-local function EnsureClassReqPattern()
-	if classReqPattern then
-		return
-	end
-	if ITEM_CLASSES_ALLOWED then
-		classReqPattern = ITEM_CLASSES_ALLOWED:format("(.*)")
-	end
-	local classToken = UnitClassBase("player")
-	if classToken then
-		playerClassMale = LOCALIZED_CLASS_NAMES_MALE and LOCALIZED_CLASS_NAMES_MALE[classToken]
-		playerClassFemale = LOCALIZED_CLASS_NAMES_FEMALE and LOCALIZED_CLASS_NAMES_FEMALE[classToken]
-	end
-end
+local apiCanUseCache = {}
 
 function ItemInfo:InvalidateUnusableCaches()
-	wipe(unusableCache)
-	wipe(classReqCache)
+	wipe(classCache)
 	wipe(reqLevelCache)
-	classReqPattern = nil
-	playerClassMale = nil
-	playerClassFemale = nil
-	EnsureClassReqPattern()
+	wipe(apiCanUseCache)
 end
 
-local function ResolveItemKey(entry)
-	local link = entry.hyperlink
-	if link then
-		return link
+--- Blizzard's equip check for weapons/armor. Tri-state: true / false / nil (unknown).
+local function QueryCanUseItem(item)
+	local itemID = item.itemID
+	if not (itemID and F.NotSecret(itemID) and C_PlayerInfo and C_PlayerInfo.CanUseItem) then
+		return nil
 	end
-	local id = entry.itemID
-	if id then
-		return id
+	local cached = apiCanUseCache[itemID]
+	if cached ~= nil then
+		return cached
+	end
+	local classID = item.classID
+	if classID ~= Enum.ItemClass.Weapon and classID ~= Enum.ItemClass.Armor then
+		return nil
+	end
+	local ok, usable = pcall(C_PlayerInfo.CanUseItem, itemID)
+	if ok and F.NotSecret(usable) then
+		apiCanUseCache[itemID] = usable and true or false
+		return apiCanUseCache[itemID]
 	end
 	return nil
 end
 
-local function IsEquippableGearKey(key)
-	if not key then
-		return false
-	end
-	if IsEquippableItem then
-		local ok, equippable = pcall(IsEquippableItem, key)
-		if ok and equippable then
-			return true
-		end
-	end
-	local instant = F.GetItemInfoInstantRecord(key)
-	local slot = instant and instant.itemEquipLoc
-	return slot and slot ~= ""
-end
-
---- LibUnfit-1.0 proficiency: wrong weapon/armor subclass or offhand when cannot dual-wield.
-local function IsProficiencyUnusable(key)
-	if not (playerUnusable and key) then
-		return false
-	end
-	local instant = F.GetItemInfoInstantRecord(key)
-	if not instant then
-		return false
-	end
-	local classID = instant.classID
-	local subClassID = instant.subclassID or instant.subClassID
-	local equipLoc = instant.itemEquipLoc
-	if not (classID and subClassID and equipLoc) then
+local function IsClassUnusable(item)
+	if not (playerUnusable and item.itemID and item.classID and item.subClassID) then
 		return false
 	end
 
-	local map = playerUnusable[classID]
-	if equipLoc ~= "" and map and map[subClassID] then
-		return true
-	end
-	if cannotDual and equipLoc == INVTYPE_WEAPONOFFHAND then
-		return true
-	end
-	return false
-end
-
---- Bagnon ItemSearch: scan tooltip for ITEM_CLASSES_ALLOWED (not red stat lines).
-local function HasClassRequirementMismatch(itemID)
-	if not itemID then
-		return false
-	end
-	local cached = classReqCache[itemID]
+	local cached = classCache[item.itemID]
 	if cached ~= nil then
 		return cached
 	end
 
-	EnsureClassReqPattern()
-	if not (classReqPattern and (playerClassMale or playerClassFemale) and C_TooltipInfo and C_TooltipInfo.GetItemByID) then
-		classReqCache[itemID] = false
-		return false
-	end
-
 	local result = false
-	local ok, data = pcall(C_TooltipInfo.GetItemByID, itemID)
-	if ok and data and data.lines then
-		local lines = data.lines
-		for i = #lines - 1, 5, -1 do
-			local line = lines[i]
-			local text = line and line.leftText
-			if text then
-				local classList = text:match(classReqPattern)
-				if classList then
-					local matches = (playerClassMale and classList:find(playerClassMale, 1, true))
-						or (playerClassFemale and classList:find(playerClassFemale, 1, true))
-					result = not matches
-					break
-				end
-			end
-		end
+	local equipLoc = item.itemEquipLoc
+	local map = playerUnusable[item.classID]
+	if equipLoc and equipLoc ~= "" and map and map[item.subClassID] then
+		result = true
+	elseif cannotDual and equipLoc == "INVTYPE_WEAPONOFFHAND" then
+		result = true
 	end
 
-	classReqCache[itemID] = result
-	return result
-end
-
-local function IsBelowRequiredLevel(itemID, key)
-	if not itemID then
-		return false
-	end
-	local req = reqLevelCache[itemID]
-	if req == nil then
-		local info = (key and F.GetItemInfoRecord(key)) or F.GetItemInfoRecord(itemID)
-		local safe = info and info.itemMinLevel
-		if safe then
-			reqLevelCache[itemID] = safe
-			req = safe
-		else
-			reqLevelCache[itemID] = false
-			req = false
-		end
-	end
-	if not req or req <= 0 then
-		return false
-	end
-	return req > playerLevel
+	return F.CacheSet(classCache, item.itemID, result)
 end
 
 --- True when the player's class can't use the item, or is below its required
@@ -277,83 +182,51 @@ function ItemInfo:IsUnusable(item)
 		return false
 	end
 
-	local itemID = item.itemID
-	if not itemID then
+	local canUse = QueryCanUseItem(item)
+	if canUse == true then
 		return false
 	end
-
-	-- Defer until item data is loaded; a premature check can cache a wrong answer.
-	if IsItemDataCachedByID and not IsItemDataCachedByID(itemID) then
-		return false
+	if canUse == false then
+		return true
 	end
 
-	local cached = unusableCache[itemID]
-	if cached ~= nil then
-		return cached
+	if IsClassUnusable(item) then
+		return true
 	end
 
-	local key = ResolveItemKey(item)
-	if not IsEquippableGearKey(key) then
-		return F.CacheSet(unusableCache, itemID, false)
+	if item.hyperlink and not F.IsSecret(item.hyperlink) then
+		local req = reqLevelCache[item.itemID]
+		if req == nil then
+			req = select(5, C_Item.GetItemInfo(item.hyperlink)) or 0
+			reqLevelCache[item.itemID] = req
+		end
+		if F.NotSecret(req) and req > 0 and F.NotSecret(playerLevel) and req > playerLevel then
+			return true
+		end
 	end
 
-	if IsProficiencyUnusable(key) then
-		return F.CacheSet(unusableCache, itemID, true)
-	end
-
-	if HasClassRequirementMismatch(itemID) then
-		return F.CacheSet(unusableCache, itemID, true)
-	end
-
-	if IsBelowRequiredLevel(itemID, key) then
-		return F.CacheSet(unusableCache, itemID, true)
-	end
-
-	return F.CacheSet(unusableCache, itemID, false)
+	return false
 end
 
-local function ResolveGearClassID(entry)
-	local classID = entry.classID
-	if classID then
-		return classID
-	end
-	local id = entry.itemID
-	if not id then
-		return nil
-	end
-	local instant = F.GetItemInfoInstantRecord(id)
-	if instant and instant.classID then
-		return instant.classID
-	end
-	local record = F.GetItemInfoRecord(id)
-	if record and record.classID then
-		return record.classID
-	end
-	return nil
-end
-
-local function IsEquippableGear(entry)
-	local classID = ResolveGearClassID(entry)
-	return classID == Enum.ItemClass.Weapon or classID == Enum.ItemClass.Armor
-end
+-- ---------------------------------------------------------------------------
+-- Item level + bind label (cached; populated at scan into entry.ilvl/bindLabel)
+-- ---------------------------------------------------------------------------
 
 function ItemInfo:GetItemLevel(entry)
-	if not entry or not IsEquippableGear(entry) then
+	if not entry or not entry.hyperlink or F.IsSecret(entry.hyperlink) then
+		return nil
+	end
+	if entry.classID ~= Enum.ItemClass.Weapon and entry.classID ~= Enum.ItemClass.Armor then
 		return nil
 	end
 
 	local link = entry.hyperlink
-	local cacheKey = link or entry.itemID
-	if cacheKey then
-		local cached = itemLevelCache[cacheKey]
-		if cached ~= nil then
-			return cached
-		end
+	local cached = itemLevelCache[link]
+	if cached ~= nil then
+		return cached
 	end
 
-	-- Match the game tooltip (timewarped/scaled gear shows the same ilvl the player sees).
-	-- WoWUIBugs #828: GetDetailedItemLevelInfo and GetItemInfo.itemLevel can return
-	-- wrong values in 12.0+; tooltip + Item:GetCurrentItemLevel are reliable.
+	-- Match the game tooltip (timewarped items show base ilvl, not scaled effective).
 	if entry.bag and entry.slot and C_TooltipInfo and C_TooltipInfo.GetBagItem and LINE_ITEM_LEVEL then
 		local ok, data = pcall(C_TooltipInfo.GetBagItem, entry.bag, entry.slot)
 		if ok and data and data.lines then
@@ -361,10 +234,8 @@ function ItemInfo:GetItemLevel(entry)
 				local line = data.lines[i]
 				if line.type == LINE_ITEM_LEVEL then
 					local level = line.itemLevel
-					if level and level > 0 then
-						if cacheKey then
-							F.CacheSet(itemLevelCache, cacheKey, level)
-						end
+					if level and F.NotSecret(level) and level > 0 then
+						F.CacheSet(itemLevelCache, link, level)
 						return level
 					end
 				end
@@ -372,27 +243,14 @@ function ItemInfo:GetItemLevel(entry)
 		end
 	end
 
-	local Item = _G["Item"]
-	if entry.bag and entry.slot and Item then
-		local item = Item:CreateFromBagAndSlot(entry.bag, entry.slot)
-		if item and item.IsValid and item:IsValid() and item.GetCurrentItemLevel then
-			local ok, level = pcall(item.GetCurrentItemLevel, item)
-			if ok and level and level > 0 then
-				if cacheKey then
-					F.CacheSet(itemLevelCache, cacheKey, level)
-				end
-				return level
-			end
-		end
+	if not C_Item or not C_Item.GetDetailedItemLevelInfo then
+		return nil
 	end
 
-	local info = F.GetItemInfoRecord(link) or F.GetItemInfoRecord(entry.itemID)
-	local level = info and info.itemLevel
-	if level and level > 0 then
-		if cacheKey then
-			F.CacheSet(itemLevelCache, cacheKey, level)
-		end
-		return level
+	local ok, actual = pcall(C_Item.GetDetailedItemLevelInfo, link)
+	if ok and F.NotSecret(actual) and actual and actual > 0 then
+		F.CacheSet(itemLevelCache, link, actual)
+		return actual
 	end
 end
 
@@ -405,10 +263,10 @@ end
 local bindLabelCache = {}
 
 function ItemInfo:GetBindLabel(entry)
-	if not entry then
+	if not entry or not entry.hyperlink or F.IsSecret(entry.hyperlink) then
 		return nil
 	end
-	if entry.isBound == true then
+	if entry.isBound then
 		return nil
 	end
 
@@ -429,13 +287,13 @@ function ItemInfo:GetBindLabel(entry)
 				local line = data.lines[i]
 				if line.type == LINE_ITEM_BINDING then
 					local bonding = line.bonding
-					if bonding == BIND.BindOnEquip then
+					if F.NotSecret(bonding) and bonding == BIND.BindOnEquip then
 						label = "BoE"
-					elseif bonding == BIND.BindOnUse then
+					elseif F.NotSecret(bonding) and bonding == BIND.BindOnUse then
 						label = "BoU"
-					elseif bonding == BIND.Account or bonding == BIND.BindToAccount or bonding == BIND.BindToBnetAccount or bonding == BIND.BnetAccount then
+					elseif F.NotSecret(bonding) and (bonding == BIND.Account or bonding == BIND.BindToAccount or bonding == BIND.BindToBnetAccount or bonding == BIND.BnetAccount) then
 						label = "BoA"
-					elseif bonding == BIND.AccountUntilEquipped or bonding == BIND.BindToAccountUntilEquipped then
+					elseif F.NotSecret(bonding) and (bonding == BIND.AccountUntilEquipped or bonding == BIND.BindToAccountUntilEquipped) then
 						label = "WuE"
 					end
 					resolved = true
@@ -446,10 +304,8 @@ function ItemInfo:GetBindLabel(entry)
 	end
 
 	if not resolved and ITEM_BIND and C_Item and C_Item.GetItemInfo then
-		local info = (entry.hyperlink and F.GetItemInfoRecord(entry.hyperlink))
-			or (entry.itemID and F.GetItemInfoRecord(entry.itemID))
-		local bindType = info and info.bindType
-		if bindType ~= nil then
+		local bindType = select(14, C_Item.GetItemInfo(entry.hyperlink))
+		if bindType ~= nil and F.NotSecret(bindType) then
 			resolved = true
 			if bindType == ITEM_BIND.OnEquip then
 				label = "BoE"
@@ -516,10 +372,6 @@ function ItemInfo:Apply()
 	if on and db.unusable then
 		RefreshUnusableEntries()
 	end
-	if ns.Scan and ns.Scan.RefreshDisplayFieldsAll then
-		ns.Scan.RefreshDisplayFieldsAll()
-		return
-	end
 	-- Display flags / overlay layout: bump DrawEpoch so panels repaint without a
 	-- full rescan (rescan alone leaves SectionSignature unchanged).
 	ns:RefreshBags(false)
@@ -528,10 +380,6 @@ end
 function ItemInfo:OnEnable()
 	BuildUnusable()
 	playerLevel = UnitLevel("player") or 1
-	wipe(itemLevelCache)
-	if ns.Scan and ns.Scan.ClearItemCaches then
-		ns.Scan.ClearItemCaches()
-	end
 	self:InvalidateUnusableCaches()
 	self:Apply()
 	self.levelUpHandler = self:RegisterEvent("PLAYER_LEVEL_UP", "OnLevelUp")
@@ -541,6 +389,7 @@ function ItemInfo:OnLevelUp(level)
 	playerLevel = level or UnitLevel("player") or 1
 	self:InvalidateUnusableCaches()
 	RefreshUnusableEntries()
+	ns:RefreshBags(false)
 end
 
 function ItemInfo:OnSettingChanged()
@@ -561,13 +410,13 @@ end
 function ItemInfo:RegisterOptions(category, builder)
 	local _, master = builder:Checkbox(category, self, "enable", L["Enable Item Info"], L["Show item level, bind status and unusable-item tinting on bag and bank slots."])
 
-	local _, ilvl = builder:Checkbox(category, self, "itemLevel", L["Show Item Level"], L["Show the (quality-colored) item level on equippable gear."])
+	local _, ilvl = builder:Checkbox(category, self, "itemLevel", L["Show Item Level"], L["Show the (quality-coloured) item level on equippable gear."])
 	builder:DependsOn(ilvl, master)
 
 	local _, bind = builder:Checkbox(category, self, "bindText", L["Show Bind Status"], L["Show BoE, BoU, BoA and WuE labels on items that are not yet bound."])
 	builder:DependsOn(bind, master)
 
-	local _, unfit = builder:Checkbox(category, self, "unusable", L["Color Unusable Items"], L["Tint icons red for items your class can't use or that you're too low level for."])
+	local _, unfit = builder:Checkbox(category, self, "unusable", L["Colour Unusable Items"], L["Tint icons red for items your class can't use or that you're too low level for."])
 	builder:DependsOn(unfit, master)
 
 	builder:Header(L["Overlay Positions"])

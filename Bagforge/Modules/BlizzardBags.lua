@@ -63,13 +63,8 @@ end
 function BlizzardBags.Apply(target)
 	target.NeutralizeBlizzardBags = BlizzardBags.NeutralizeBlizzardBags
 	target.SuppressBlizzardBags = BlizzardBags.SuppressBlizzardBags
-	target.RestoreBlizzardBags = BlizzardBags.RestoreBlizzardBags
 	target.SetupKeybinds = BlizzardBags.SetupKeybinds
 end
-
--- Saved before SuppressBlizzardBags replaces them; restored on module disable.
-local savedGlobals = nil
-local closeHooksInstalled = false
 
 local function HideContainerFrame(frame, holder)
 	if not frame then
@@ -118,39 +113,18 @@ function BlizzardBags:SuppressBlizzardBags()
 
 	self:NeutralizeBlizzardBags()
 
-	if not savedGlobals then
-		savedGlobals = {
-			ToggleAllBags = _G.ToggleAllBags,
-			ToggleBackpack = _G.ToggleBackpack,
-			ToggleBag = _G.ToggleBag,
-			OpenAllBags = _G.OpenAllBags,
-			OpenBackpack = _G.OpenBackpack,
-			OpenBag = _G.OpenBag,
-		}
-	end
-
 	local backpack = self
 	local openOurs = function()
-		if not backpack.defaultBagsSuppressed then
-			return
-		end
 		backpack:NeutralizeBlizzardBags()
 		backpack:Open()
 	end
 	local closeOurs = function()
-		-- hooksecurefunc cannot uninstall — gate when restored.
-		if not backpack.defaultBagsSuppressed then
-			return
-		end
 		if not InCombatLockdown() then
 			backpack:NeutralizeBlizzardBags()
 		end
 		backpack:Close()
 	end
 	local toggleOurs = function()
-		if not backpack.defaultBagsSuppressed then
-			return
-		end
 		local now = GetTime()
 		if now - lastToggleTime < TOGGLE_DEBOUNCE then
 			return
@@ -169,8 +143,7 @@ function BlizzardBags:SuppressBlizzardBags()
 	_G.OpenBackpack = openOurs
 	_G.OpenBag = openOurs
 
-	if hooksecurefunc and not closeHooksInstalled then
-		closeHooksInstalled = true
+	if hooksecurefunc then
 		if _G["CloseAllBags"] then
 			hooksecurefunc("CloseAllBags", closeOurs)
 		end
@@ -181,39 +154,8 @@ function BlizzardBags:SuppressBlizzardBags()
 
 	if EventRegistry then
 		EventRegistry:RegisterCallback("ContainerFrame.OpenBag", function()
-			if not backpack.defaultBagsSuppressed then
-				return
-			end
 			backpack:NeutralizeBlizzardBags()
 		end, backpack)
-	end
-end
-
---- Put stock bag open/toggle globals back (module disable / teardown).
---- Close* hooks stay installed but no-op while defaultBagsSuppressed is false.
-function BlizzardBags:RestoreBlizzardBags()
-	if not self.defaultBagsSuppressed then
-		return
-	end
-	self.defaultBagsSuppressed = false
-	pendingNeutralize = false
-	pendingNeutralizeOwner = nil
-
-	if savedGlobals then
-		_G.ToggleAllBags = savedGlobals.ToggleAllBags
-		_G.ToggleBackpack = savedGlobals.ToggleBackpack
-		_G.ToggleBag = savedGlobals.ToggleBag
-		_G.OpenAllBags = savedGlobals.OpenAllBags
-		_G.OpenBackpack = savedGlobals.OpenBackpack
-		_G.OpenBag = savedGlobals.OpenBag
-	end
-
-	if self.bindingFrame then
-		ClearOverrideBindings(self.bindingFrame)
-	end
-
-	if EventRegistry and EventRegistry.UnregisterCallback then
-		EventRegistry:UnregisterCallback("ContainerFrame.OpenBag", self)
 	end
 end
 

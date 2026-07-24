@@ -22,10 +22,12 @@ local C, F, L = ns.C, ns.F, ns.L
 local CreateFrame = CreateFrame
 local C_AddOns = C_AddOns
 local C_Container = C_Container
+local C_Item = C_Item
 local InCombatLockdown = InCombatLockdown
 local CursorHasItem = CursorHasItem
 local ClearCursor = ClearCursor
 local GetCursorInfo = GetCursorInfo
+local GetItemInfoInstant = C_Item.GetItemInfoInstant
 local ipairs = ipairs
 local pcall = pcall
 local wipe = wipe
@@ -144,14 +146,11 @@ local function LayoutBackpackExtendedSlots(container, cellIndex, columns, size, 
 			lock:SetAllPoints(slot)
 			container.extendedSlots[i] = slot
 		end
-		-- Same SetScale model as the item buttons so the padlock chrome stays aligned.
-		local scale = size / C.Layout.ITEM_SIZE
-		slot:SetSize(C.Layout.ITEM_SIZE, C.Layout.ITEM_SIZE)
-		slot:SetScale(scale)
+		slot:SetSize(size, size)
 		local col = gridIndex % columns
 		local row = floor(gridIndex / columns)
 		slot:ClearAllPoints()
-		slot:SetPoint("TOPLEFT", container.frame, "TOPLEFT", (leftX + col * (size + pad)) / scale, -(topOffset + row * (size + pad)) / scale)
+		slot:SetPoint("TOPLEFT", container.frame, "TOPLEFT", leftX + col * (size + pad), -(topOffset + row * (size + pad)))
 		slot:Show()
 	end
 
@@ -200,16 +199,11 @@ local function FreeSlot_Deposit(free)
 		local numSlots = C_Container.GetContainerNumSlots(bag) or 0
 		for slot = 1, numSlots do
 			local info = C_Container.GetContainerItemInfo(bag, slot)
-			-- Empty only. Occupied slots used to match here and stole the cursor
-			-- onto the first item in the bag — not the free slot.
-			if not info or not info.itemID then
+			if not (info and info.itemID) then
 				C_Container.PickupContainerItem(bag, slot)
 				return
 			end
 		end
-	end
-	if UIErrorsFrame and ERR_BAG_FULL then
-		UIErrorsFrame:AddMessage(ERR_BAG_FULL, 1, 0.3, 0.3)
 	end
 end
 
@@ -238,25 +232,22 @@ local function FreeSlot_OnLeave()
 end
 
 local freeSlotCount = 0
+local ERR_NOT_IN_COMBAT = _G["ERR_NOT_IN_COMBAT"]
+local UIErrorsFrame = _G["UIErrorsFrame"]
 
 local function AddFreeSlot(container)
 	-- Bare ItemButton intrinsic: same base slot frame, but without the container
-	-- template's new-item/context glow and tooltip OnUpdate. Slot chrome matches
-	-- Baganator's retail item buttons (bags-item-slot64 on the icon region) rather
-	-- than ItemSlotBackgroundCombinedBagsTemplate; we keep cargBags' centered count.
+	-- template's new-item/context glow and tooltip OnUpdate. For the recessed fill,
+	-- use Blizzard's combined-bag slot background template (same pattern as
+	-- Bagforge's bag-bar slots) instead of SetItemButtonTexture; the intrinsic icon
+	-- region is what was pinning the background small in the top-left.
 	freeSlotCount = freeSlotCount + 1
 	local free = CreateFrame("ItemButton", "BagforgeFreeSlot" .. freeSlotCount, container.frame)
 	free:SetSize(C.Layout.ITEM_SIZE, C.Layout.ITEM_SIZE)
 	free:Hide()
 
-	local slotBG = free:CreateTexture(nil, "BACKGROUND", nil, -1)
-	local bgAnchor = free.icon or free.Icon or free
-	slotBG:SetAllPoints(bgAnchor)
-	if slotBG.SetAtlas then
-		slotBG:SetAtlas("bags-item-slot64")
-	else
-		slotBG:SetTexture("Interface\\PaperDoll\\UI-Backpack-EmptySlot")
-	end
+	local slotBG = free:CreateTexture(nil, "BACKGROUND", "ItemSlotBackgroundCombinedBagsTemplate", -6)
+	slotBG:SetAllPoints(free)
 	slotBG:Show()
 	free.slotBG = slotBG
 
@@ -318,7 +309,6 @@ function Container.New(parent, name, showClose)
 		frame = frame,
 		header = header,
 		buttons = {},
-		buttonsByKey = {},
 	}, methods)
 end
 
@@ -369,7 +359,12 @@ local function FoldHash(h, v)
 	return (h * 31 + (v or 0)) % 2147483647
 end
 
+-- Bag APIs are usually non-secret, but guard anyway so signature hashing never
+-- throws during combat or in instances (Midnight secret model).
 local function SafeFold(h, v)
+	if v ~= nil and type(v) == "number" and F.IsSecret(v) then
+		return FoldHash(h, -1)
+	end
 	return FoldHash(h, v)
 end
 
@@ -391,7 +386,8 @@ local function NameHash(name)
 	return h
 end
 
-local function LayoutOptsHash(h, section, columns, opts, showHeader)
+local function SectionSignature(section, columns, opts, showHeader)
+	local h = FoldHash(0, ns.DrawEpoch or 0)
 	h = FoldHash(h, NameHash(section and section.name))
 	h = FoldHash(h, columns)
 	h = FoldHash(h, opts.forceWidth or -1)
@@ -411,51 +407,26 @@ local function LayoutOptsHash(h, section, columns, opts, showHeader)
 	if section and section.name == L["Junk"] then
 		h = SafeFold(h, section.junkValue)
 	end
-	return h
-end
-
-local function PaintHashEntry(h, e)
-	h = SafeFold(h, e.itemID)
-	h = SafeFold(h, e.count)
-	h = SafeFold(h, e.quality)
-	-- Normalized scan booleans are plain true/false; still fold safely.
-	h = FoldHash(h, e.isFiltered == true and 1 or 0)
-	h = FoldHash(h, e.isLocked == true and 1 or 0)
-	h = FoldHash(h, e.isNewItem == true and 1 or 0)
-	h = FoldHash(h, e.isBound == true and 1 or 0)
-	h = FoldHash(h, e.isUnusable == true and 1 or 0)
-	h = SafeFold(h, e.icon)
-	if e.bindLabel then
-		for j = 1, #e.bindLabel do
-			h = FoldHash(h, e.bindLabel:byte(j))
-		end
-	end
-	h = SafeFold(h, e.ilvl)
-	return h
-end
-
---- Grid membership + order (slot keys only).
-local function StructureSignature(section, displayEntries, count, columns, opts, showHeader, size)
-	local h = LayoutOptsHash(0, section, columns, opts, showHeader)
-	h = FoldHash(h, size or 0) -- icon-size change must invalidate cached geometry
-	h = FoldHash(h, count)
-	for i = 1, count do
-		local e = displayEntries[i]
-		if e then
+	local items = section and section.items
+	if items then
+		for i = 1, #items do
+			local e = items[i]
 			h = FoldHash(h, e.key)
-		end
-	end
-	return h
-end
-
---- Per-item display fields (paint-only updates skip full relayout).
-local function PaintSignature(section, displayEntries, count, columns, opts, showHeader)
-	local h = FoldHash(0, ns.DrawEpoch or 0)
-	h = LayoutOptsHash(h, section, columns, opts, showHeader)
-	for i = 1, count do
-		local e = displayEntries[i]
-		if e then
-			h = PaintHashEntry(h, e)
+			h = SafeFold(h, e.itemID)
+			h = SafeFold(h, e.count)
+			h = SafeFold(h, e.quality)
+			h = FoldHash(h, e.isFiltered and 1 or 0)
+			h = FoldHash(h, e.isLocked and 1 or 0)
+			h = FoldHash(h, e.isNewItem and 1 or 0)
+			h = FoldHash(h, e.isBound and 1 or 0)
+			h = FoldHash(h, e.isUnusable and 1 or 0)
+			h = SafeFold(h, e.icon)
+			if e.bindLabel and F.CanAccessValue(e.bindLabel) then
+				for j = 1, #e.bindLabel do
+					h = FoldHash(h, e.bindLabel:byte(j))
+				end
+			end
+			h = SafeFold(h, e.ilvl)
 		end
 	end
 	return h
@@ -471,7 +442,11 @@ local function SectionItemTotal(section)
 	local n = 0
 	for i = 1, #items do
 		local c = items[i].count or 1
-		n = n + c
+		if F.NotSecret(c) then
+			n = n + c
+		else
+			n = n + 1
+		end
 	end
 	return n
 end
@@ -486,8 +461,7 @@ local function BuildHeaderText(section, name)
 			text = format("%s (%s)", name, num)
 		end
 	end
-	-- Match LayoutOptsHash: nil defaults to show (only explicit false hides).
-	local showJunk = not (ns.db and ns.db.backpack and ns.db.backpack.showJunkPrice == false)
+	local showJunk = not ns.db or not ns.db.backpack or ns.db.backpack.showJunkPrice
 	if showJunk and name == L["Junk"] and section then
 		local totalJunkValue = section.junkValue
 		if totalJunkValue and totalJunkValue > 0 then
@@ -519,7 +493,7 @@ local function LayoutEntries(entries, hideNonMatches)
 	local n = 0
 	for i = 1, total do
 		local e = entries[i]
-		if e and not e.isFiltered then
+		if not e.isFiltered then
 			n = n + 1
 			layoutVisibleScratch[n] = e
 		end
@@ -535,11 +509,6 @@ local function CancelBatchLayout(container)
 		return
 	end
 	container._batchState = nil
-	-- Signatures were written before the batch finished. Clear them so the next
-	-- Layout() cannot early-out with half the buttons missing (combat cancel).
-	container._structSig = nil
-	container._paintSig = nil
-	container._sig = nil
 	for i = #layoutBatchPending, 1, -1 do
 		if layoutBatchPending[i] == container then
 			table.remove(layoutBatchPending, i)
@@ -558,18 +527,6 @@ local function QueueBatchLayout(container)
 		layoutBatchFrame = CreateFrame("Frame")
 	end
 	layoutBatchFrame:SetScript("OnUpdate", function()
-		if InCombatLockdown() then
-			for i = #layoutBatchPending, 1, -1 do
-				local panel = layoutBatchPending[i]
-				CancelBatchLayout(panel)
-				local itemButton = ns:GetModule("ItemButton")
-				if itemButton and itemButton.FlagCombatLayoutPending then
-					itemButton:FlagCombatLayoutPending()
-				end
-			end
-			layoutBatchFrame:SetScript("OnUpdate", nil)
-			return
-		end
 		local i = 1
 		while i <= #layoutBatchPending do
 			local panel = layoutBatchPending[i]
@@ -585,110 +542,33 @@ local function QueueBatchLayout(container)
 	end)
 end
 
---- When the combat pool is dry, repurpose a button still held from the previous
---- layout pass (indices we have not rewritten yet this draw).
-local function BorrowStaleLayoutButton(container, fromIndex)
-	local high = container._buttonHigh or 0
-	for j = high, fromIndex + 1, -1 do
-		local btn = container.buttons[j]
-		if btn then
-			container.buttons[j] = nil
-			return btn
-		end
-	end
-	for j = #container.buttons, fromIndex + 1, -1 do
-		local btn = container.buttons[j]
-		if btn then
-			container.buttons[j] = nil
-			return btn
-		end
-	end
-	return nil
-end
-
-local function ReleaseLayoutButton(container, button, itemButton)
-	if button and button.entry and button.entry.key then
-		container.buttonsByKey[button.entry.key] = nil
-	end
-	itemButton:Release(button)
-end
-
 local function PlaceLayoutButton(container, i, entry, columns, size, pad, leftX, topOffset, itemButton)
-	if not entry then
-		local stale = container.buttons[i]
-		if stale then
-			ReleaseLayoutButton(container, stale, itemButton)
-			container.buttons[i] = nil
-		end
-		return
-	end
 	local button = container.buttons[i]
 	if not button then
 		button = itemButton:Acquire()
-		if not button then
-			button = BorrowStaleLayoutButton(container, i)
-		end
 		if button then
 			button:SetParent(container.frame)
 			container.buttons[i] = button
 		end
 	end
 	if button then
-		container._buttonHigh = max(container._buttonHigh or 0, i)
 		local col = (i - 1) % columns
 		local row = floor((i - 1) / columns)
-		-- Icon size is applied with SetScale, not SetSize: the ItemButton template's
-		-- border/quality/quest textures are fixed-size and a SetSize leaves them
-		-- misaligned. SetScale grows the whole button uniformly (Baganator's method).
-		-- Anchor offsets live in the button's scaled space, so divide by the scale.
-		local scale = size / C.Layout.ITEM_SIZE
-		button:SetScale(scale)
 		button:ClearAllPoints()
-		button:SetPoint("TOPLEFT", container.frame, "TOPLEFT", (leftX + col * (size + pad)) / scale, -(topOffset + row * (size + pad)) / scale)
+		button:SetPoint("TOPLEFT", container.frame, "TOPLEFT", leftX + col * (size + pad), -(topOffset + row * (size + pad)))
 		button:SetItemEntry(entry)
-		if entry.key then
-			container.buttonsByKey[entry.key] = button
-		end
 	else
 		local stale = container.buttons[i]
 		if stale then
-			ReleaseLayoutButton(container, stale, itemButton)
+			itemButton:Release(stale)
 			container.buttons[i] = nil
 		end
-	end
-end
-
-local function ReleaseExtraButtons(container, fromIndex, itemButton)
-	local high = container._buttonHigh or #container.buttons
-	for i = high, fromIndex, -1 do
-		local btn = container.buttons[i]
-		if btn then
-			ReleaseLayoutButton(container, btn, itemButton)
-			container.buttons[i] = nil
-		end
-	end
-	if fromIndex > 1 then
-		container._buttonHigh = fromIndex - 1
-	else
-		container._buttonHigh = nil
 	end
 end
 
 function methods:_AdvanceLayoutBatch()
 	local state = self._batchState
 	if not state then
-		return true
-	end
-	if state.layoutGen and state.layoutGen ~= self._layoutGen then
-		CancelBatchLayout(self)
-		return true
-	end
-	if InCombatLockdown() then
-		CancelBatchLayout(self)
-		local itemButton = ns:GetModule("ItemButton")
-		if itemButton and itemButton.FlagCombatLayoutPending then
-			itemButton:FlagCombatLayoutPending()
-		end
 		return true
 	end
 	local itemButton = ns:GetModule("ItemButton")
@@ -699,48 +579,14 @@ function methods:_AdvanceLayoutBatch()
 	end
 	state.nextIndex = to + 1
 	if state.nextIndex > state.count then
-		ReleaseExtraButtons(self, state.count + 1, itemButton)
+		for i = #self.buttons, state.count + 1, -1 do
+			itemButton:Release(self.buttons[i])
+			self.buttons[i] = nil
+		end
 		self._batchState = nil
 		return true
 	end
 	return false
-end
-
-function methods:PatchDisplayEntries(displayEntries, count)
-	local itemButton = ns:GetModule("ItemButton")
-	if not itemButton then
-		return
-	end
-	for i = 1, count do
-		local entry = displayEntries[i]
-		local button = entry and self.buttonsByKey[entry.key]
-		if button then
-			button:SetItemEntry(entry)
-		end
-	end
-end
-
-function methods:PatchEntry(entry)
-	if not (entry and entry.key) then
-		return false
-	end
-	local button = self.buttonsByKey[entry.key]
-	if not button then
-		return false
-	end
-	button:SetItemEntry(entry)
-	return true
-end
-
-function methods:RefreshHeader(section, opts)
-	opts = opts or {}
-	local showHeader = opts.showHeader ~= false and (not self.isMain or opts.showMainTitle)
-	if not (self.header and section and showHeader) then
-		return
-	end
-	local name = section.name
-	self.header:SetText(BuildHeaderText(section, name))
-	self.header:Show()
 end
 
 function methods:Layout(section, columns, opts)
@@ -748,31 +594,15 @@ function methods:Layout(section, columns, opts)
 
 	local showHeader = opts.showHeader ~= false and (not self.isMain or opts.showMainTitle)
 
-	local hideNonMatches = ns.db and ns.db.organize and ns.db.organize.searchHideNonMatches
-	local entries = section and section.items or {}
-	local displayEntries, count = LayoutEntries(entries, hideNonMatches)
-	-- Per-view icon size (backpack / character bank / warband each carry their own).
-	local iconSize = self.iconSize or C.Layout.ITEM_SIZE
-	local structSig, paintSig = StructureSignature(section, displayEntries, count, columns, opts, showHeader, iconSize), PaintSignature(section, displayEntries, count, columns, opts, showHeader)
-
-	if self._structSig == structSig and self._lastW then
-		if self._paintSig == paintSig then
-			-- In-flight batch already matches this layout — let it finish.
-			-- Cancelling here used to clear work while leaving signatures set.
-			self.frame:Show()
-			return self._lastW, self._lastH
-		end
-		self:PatchDisplayEntries(displayEntries, count)
-		if showHeader then
-			local name = section and section.name
-			self.header:SetText(BuildHeaderText(section, name))
-		end
-		self._paintSig = paintSig
+	-- Unchanged since last draw: keep the existing buttons exactly as they are and
+	-- just re-show the frame. The caller (StackCategories) still re-anchors panels,
+	-- which is cheap; this only avoids releasing/re-acquiring/repainting buttons.
+	local sig = SectionSignature(section, columns, opts, showHeader)
+	if self._sig == sig and self._lastW then
 		self.frame:Show()
 		return self._lastW, self._lastH
 	end
-	self._structSig = structSig
-	self._paintSig = paintSig
+	self._sig = sig
 	CancelBatchLayout(self)
 
 	if showHeader then
@@ -800,7 +630,11 @@ function methods:Layout(section, columns, opts)
 		self.header:Hide()
 	end
 
-	local size, pad = iconSize, C.Layout.ITEM_PADDING
+	local itemButton = ns:GetModule("ItemButton")
+	local entries = section and section.items or {}
+	local hideNonMatches = ns.db and ns.db.organize and ns.db.organize.searchHideNonMatches
+	local displayEntries, count = LayoutEntries(entries, hideNonMatches)
+	local size, pad = C.Layout.ITEM_SIZE, C.Layout.ITEM_PADDING
 	local insetX = C.Layout.PANEL_PADDING_X
 	local leftX = insetX + C.Layout.PANEL_BIAS_X -- grid shifted right to balance the border
 	local insetY = C.Layout.PANEL_PADDING
@@ -811,18 +645,8 @@ function methods:Layout(section, columns, opts)
 
 	local batchSize = opts.layoutBatchSize
 	if batchSize and batchSize > 0 and count > batchSize then
-		self._layoutGen = (self._layoutGen or 0) + 1
-		-- layoutVisibleScratch is a single module-level table that LayoutEntries()
-		-- returns directly when search-hide filtering is active. Any sibling container's
-		-- Layout() call before _AdvanceLayoutBatch fires next frame wipes it and
-		-- refills it for the new container — leaving our batch's entry refs nil.
-		-- Snapshot once at batch-start; deferred frames always see the stable list.
-		local snapshot = {}
-		for i = 1, count do
-			snapshot[i] = displayEntries[i]
-		end
 		self._batchState = {
-			displayEntries = snapshot,
+			displayEntries = displayEntries,
 			count = count,
 			columns = columns,
 			size = size,
@@ -831,18 +655,20 @@ function methods:Layout(section, columns, opts)
 			topOffset = topOffset,
 			batchSize = batchSize,
 			nextIndex = 1,
-			layoutGen = self._layoutGen,
 		}
 		local itemButton = ns:GetModule("ItemButton")
 		local firstEnd = min(batchSize, count)
 		for i = 1, firstEnd do
-			PlaceLayoutButton(self, i, snapshot[i], columns, size, pad, leftX, topOffset, itemButton)
+			PlaceLayoutButton(self, i, displayEntries[i], columns, size, pad, leftX, topOffset, itemButton)
 		end
 		self._batchState.nextIndex = firstEnd + 1
 		if self._batchState.nextIndex <= count then
 			QueueBatchLayout(self)
 		else
-			ReleaseExtraButtons(self, count + 1, itemButton)
+			for i = #self.buttons, count + 1, -1 do
+				itemButton:Release(self.buttons[i])
+				self.buttons[i] = nil
+			end
 			self._batchState = nil
 		end
 	else
@@ -850,7 +676,10 @@ function methods:Layout(section, columns, opts)
 		for i = 1, count do
 			PlaceLayoutButton(self, i, displayEntries[i], columns, size, pad, leftX, topOffset, itemButton)
 		end
-		ReleaseExtraButtons(self, count + 1, itemButton)
+		for i = #self.buttons, count + 1, -1 do
+			itemButton:Release(self.buttons[i])
+			self.buttons[i] = nil
+		end
 	end
 
 	-- The free-slot box (main panel only) trails the last item as cell #count+1,
@@ -860,11 +689,8 @@ function methods:Layout(section, columns, opts)
 		if opts.freeCount ~= nil then
 			local col = count % columns
 			local row = floor(count / columns)
-			-- The free slot is an ItemButton too, so it scales like the item buttons.
-			local scale = size / C.Layout.ITEM_SIZE
-			self.freeSlot:SetScale(scale)
 			self.freeSlot:ClearAllPoints()
-			self.freeSlot:SetPoint("TOPLEFT", self.frame, "TOPLEFT", (leftX + col * (size + pad)) / scale, -(topOffset + row * (size + pad)) / scale)
+			self.freeSlot:SetPoint("TOPLEFT", self.frame, "TOPLEFT", leftX + col * (size + pad), -(topOffset + row * (size + pad)))
 			self.freeSlot.count:SetText(opts.freeCount)
 			self.freeSlot.freeNum = opts.freeCount
 			self.freeSlot:Show()
@@ -905,9 +731,8 @@ end
 
 --- Pixel width of a `columns`-wide item grid including the panel insets. Used to
 --- force every panel in a window to the same width.
-function Container.GridWidth(columns, size)
-	size = size or C.Layout.ITEM_SIZE
-	local pad = C.Layout.ITEM_PADDING
+function Container.GridWidth(columns)
+	local size, pad = C.Layout.ITEM_SIZE, C.Layout.ITEM_PADDING
 	local insetX = C.Layout.PANEL_PADDING_X
 	return insetX * 2 + columns * size + (columns - 1) * pad
 end
@@ -926,7 +751,7 @@ function Container.OnCategoryDrop(container)
 	if infoType ~= "item" then
 		return
 	end
-	local itemID = (type(a) == "number" and a) or (b and F.GetItemIDFromLink(b))
+	local itemID = (type(a) == "number" and a) or (b and GetItemInfoInstant(b))
 	local organize = ns:GetModule("Organize")
 	if itemID and organize and container.categoryName then
 		if organize:AssignItem(itemID, container.categoryName) then
@@ -969,13 +794,11 @@ end
 ---   mainFrame   - the anchored root frame the first column sits above
 ---   columns     - item columns per panel
 ---   gridWidth   - forced panel width (Container.GridWidth)
----   perColumn   - category panels per column before wrapping left (backpack default 6)
+---   perColumn   - category panels per column before wrapping left (default 5)
 ---   freeSlots   - optional map [name] = { count, getBags } giving a panel its own
 ---                 free-slot box; such panels render even when they hold no items
 ---   owner       - view/backpack instance; used with GetCategoryContainer
 ---   active      - table marked active[name]=true for each drawn panel
----   dirtyCategories - when set, only panels in these categories run Layout()
----                     (others keep cached geometry; anchors still update)
 function Container.StackCategories(opts)
 	local sections = opts.sections
 	local mainName = opts.mainName
@@ -986,9 +809,6 @@ function Container.StackCategories(opts)
 	local active = opts.active
 	local visibleOrder = owner and owner.visibleCategoryOrder
 	local freeSlots = opts.freeSlots
-	local iconSize = opts.iconSize -- per-view icon size, stamped on each category panel
-	local dirtyCategories = opts.dirtyCategories
-	local layoutAll = not dirtyCategories or not next(dirtyCategories)
 	local gap = C.Layout.PANEL_GAP
 
 	local perColumn = opts.perColumn or C.Layout.DEFAULT_CATEGORIES_PER_COLUMN
@@ -1012,19 +832,14 @@ function Container.StackCategories(opts)
 			end
 			local container = owner:GetCategoryContainer(section.name)
 			container.categoryName = section.name
-			container.iconSize = iconSize
 			container._orderOwner = owner
 			EnableCategoryDrop(container)
-			local layoutOpts = { forceWidth = gridW, layoutBatchSize = layoutBatchSize }
 			if freeInfo then
 				Container.AddFreeSlot(container)
 				container:SetFreeSlotDeposit(freeInfo.getBags)
-				layoutOpts.freeCount = freeInfo.count
-			end
-			if layoutAll or dirtyCategories[section.name] or not container._lastW then
-				container:Layout(section, cols, layoutOpts)
-			elseif container.frame then
-				container.frame:Show()
+				container:Layout(section, cols, { forceWidth = gridW, freeCount = freeInfo.count, layoutBatchSize = layoutBatchSize })
+			else
+				container:Layout(section, cols, { forceWidth = gridW, layoutBatchSize = layoutBatchSize })
 			end
 			local panel = container:GetFrame()
 			panel:ClearAllPoints()
@@ -1061,20 +876,9 @@ function methods:ReleaseButtons()
 	if not itemButton then
 		return
 	end
-	ReleaseExtraButtons(self, 1, itemButton)
-end
-
---- Cancel an in-flight batch and release buttons without hiding the panel frame.
-function methods:AbortLayout()
-	CancelBatchLayout(self)
-	self:ReleaseButtons()
-	self._structSig = nil
-	self._paintSig = nil
-	self._sig = nil
-	self._lastW = nil
-	self._lastH = nil
-	if self.buttonsByKey then
-		wipe(self.buttonsByKey)
+	for i = #self.buttons, 1, -1 do
+		itemButton:Release(self.buttons[i])
+		self.buttons[i] = nil
 	end
 end
 
@@ -1087,8 +891,6 @@ function methods:SetItemGridsHidden(hidden)
 	self._itemsHidden = hidden
 	if hidden then
 		CancelBatchLayout(self)
-		self._structSig = nil
-		self._paintSig = nil
 		self._sig = nil
 		self._lastW = nil
 		self._lastH = nil
@@ -1150,14 +952,11 @@ function methods:Reset()
 	self.frame:ClearAllPoints()
 	self.frame:Hide()
 	self._orderOwner = nil
-	self._structSig = nil
-	self._paintSig = nil
+	-- Invalidate the layout cache so the next Layout rebuilds from scratch
+	-- (this panel may be reused for a different category).
 	self._sig = nil
 	self._lastW = nil
 	self._lastH = nil
-	if self.buttonsByKey then
-		wipe(self.buttonsByKey)
-	end
 	self._itemsHidden = nil
 end
 

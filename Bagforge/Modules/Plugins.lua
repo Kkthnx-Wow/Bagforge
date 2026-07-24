@@ -38,10 +38,6 @@ local function SourceTooltip(src)
 		n = n + 1
 		lines[n] = format(L["Sort modes: %s"], tconcat(src.sorts, ", "))
 	end
-	if src.junk and #src.junk > 0 then
-		n = n + 1
-		lines[n] = format(L["Junk detectors: %s"], tconcat(src.junk, ", "))
-	end
 	n = n + 1
 	lines[n] = L["Uncheck to disable this plugin's categories and sort options."]
 	return tconcat(lines, "|n", 1, n)
@@ -51,23 +47,10 @@ end
 --- just disabled must fall back) and reclassify so its categories appear/vanish.
 function Plugins:OnSettingChanged()
 	local organize = ns:GetModule("Organize")
-	local oldSort = ns.db and ns.db.organize and ns.db.organize.itemSort
 	if organize and organize.ValidateSortMode then
 		organize:ValidateSortMode()
 	end
-	local newSort = ns.db and ns.db.organize and ns.db.organize.itemSort
-	if oldSort and newSort and oldSort ~= newSort then
-		ns:ResortBags()
-		return
-	end
-	if ns.ReclassifyBags then
-		ns:ReclassifyBags()
-	else
-		ns:RefreshBags(true)
-	end
-	if ns.API and ns.API.RequestItemButtonsRefresh then
-		ns.API:RequestItemButtonsRefresh()
-	end
+	ns:RefreshBags(true)
 end
 
 function Plugins:RegisterOptions(category, builder)

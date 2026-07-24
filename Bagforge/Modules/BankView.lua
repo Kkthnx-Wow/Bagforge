@@ -20,13 +20,15 @@ local BANKSLOTPURCHASE = _G["BANKSLOTPURCHASE"]
 local QUESTION_MARK_ICON = _G["QUESTION_MARK_ICON"] or "Interface\\Icons\\INV_Misc_QuestionMark"
 local SetItemButtonTexture = _G["SetItemButtonTexture"]
 local GetMoneyString = _G["GetMoneyString"]
+local GetMoney = _G["GetMoney"]
 local GetCVarBool = _G["GetCVarBool"]
 local SetCVar = _G["SetCVar"]
 local SmallMoneyFrame_OnLoad = _G["SmallMoneyFrame_OnLoad"]
+local MoneyFrame_SetType = _G["MoneyFrame_SetType"]
+local MoneyFrame_UpdateMoney = _G["MoneyFrame_UpdateMoney"]
 local ACCOUNT_BANK_ERROR_NO_LOCK = _G["ACCOUNT_BANK_ERROR_NO_LOCK"]
 local SOUNDKIT = _G["SOUNDKIT"]
 local tinsert = table.insert
-local pairs = pairs
 local wipe = wipe
 local max = math.max
 
@@ -37,6 +39,7 @@ local TAB_PURCHASE_GAP = 8
 local TAB_SELECTED_COLOR = { 0.35, 0.75, 1 }
 
 local BANK_TYPE_ACCOUNT = Enum.BankType and Enum.BankType.Account
+local BANK_TYPE_CHARACTER = Enum.BankType and Enum.BankType.Character
 local MONEY_COIN_BUTTONS = { "GoldButton", "SilverButton", "CopperButton" }
 local BANK_TAB_TOOLTIP_CLICK_INSTRUCTION = _G["BANK_TAB_TOOLTIP_CLICK_INSTRUCTION"]
 local GREEN_FONT_COLOR = _G["GREEN_FONT_COLOR"]
@@ -148,7 +151,6 @@ function BankView.New(opts)
 		bankType = opts.bankType,
 		enabledKey = opts.enabledKey,
 		columnsKey = opts.columnsKey,
-		iconSizeKey = opts.iconSizeKey,
 		frameName = opts.frameName,
 		title = opts.title,
 		staticBags = opts.staticBags,
@@ -172,12 +174,6 @@ end
 
 function View:IsWarband()
 	return self.bankType == BANK_TYPE_ACCOUNT
-end
-
---- This view's item icon size (per-view key, falling back to the bank default).
-function View:GetIconSize()
-	local bank = ns.db and ns.db.bank
-	return (bank and (bank[self.iconSizeKey] or bank.iconSize)) or C.Layout.ITEM_SIZE
 end
 
 function View:GetMoneyFrameType()
@@ -309,7 +305,7 @@ function View:BuildBankFooter()
 		-- One proxy handles both buttons; overlapping layers swallowed clicks.
 		local moneyClick = CreateFrame("Button", nil, money, "InsecureActionButtonTemplate")
 		moneyClick:SetAllPoints(money)
-		moneyClick:SetFrameLevel(F.ClampFrameLevel(money:GetFrameLevel() + 10))
+		moneyClick:SetFrameLevel(money:GetFrameLevel() + 10)
 		moneyClick:RegisterForClicks("LeftButtonUp", "RightButtonUp")
 
 		InstallMoneyTransferTooltips(self, moneyClick)
@@ -375,7 +371,13 @@ function View:UpdateDepositReagentsHighlight()
 end
 
 function View:CanUpdateBankMoney()
-	return F.CanUpdatePlayerMoney()
+	if InCombatLockdown() then
+		return false
+	end
+	if GetMoney and F.IsSecret(GetMoney()) then
+		return false
+	end
+	return true
 end
 
 function View:UpdateBankFooter()
@@ -408,14 +410,20 @@ function View:UpdateBankFooter()
 	end
 
 	local money = self.bankMoneyFrame
-	if money then
-		if F.UpdatePlayerMoneyFrame(money, self:GetMoneyFrameType()) then
+	if money and MoneyFrame_UpdateMoney then
+		if self:CanUpdateBankMoney() then
 			self.bankMoneyPending = false
+			money:Show()
+			if MoneyFrame_SetType then
+				MoneyFrame_SetType(money, self:GetMoneyFrameType())
+			end
+			MoneyFrame_UpdateMoney(money)
 			if self:SupportsMoneyTransfer() and not (InCombatLockdown and InCombatLockdown()) then
 				self:ConfigureMoneyButtons()
 			end
 		else
 			self.bankMoneyPending = true
+			money:Hide()
 		end
 	end
 end
@@ -475,13 +483,7 @@ function View:SetDepositTargetBag(bagID)
 		return
 	end
 	self.depositTargetBag = bagID
-	-- BetterBags view.sortRequired: tab switch can race a fresh draw context;
-	-- force a full panel Layout so masonry doesn't keep stale signatures.
-	self._sortRequired = true
 	self:UpdateTabBarSelection()
-	if self.open and self.sections then
-		self:DrawLayout()
-	end
 end
 
 function View:UpdateTabBarSelection()
@@ -502,14 +504,6 @@ function View:UpdateTabBarSelection()
 	end
 end
 
---- Free slots for the footer: selected bank tab when the tab bar is shown, else all bags.
-function View:GetDisplayFreeSlots()
-	if ns.db.bank.showTabBar and self.depositTargetBag then
-		return C_Container.GetContainerNumFreeSlots(self.depositTargetBag) or 0
-	end
-	return self.freeSlots or 0
-end
-
 function View:GetBankBags()
 	if C_Bank and C_Bank.FetchPurchasedBankTabIDs and self.bankType then
 		local tabs = C_Bank.FetchPurchasedBankTabIDs(self.bankType)
@@ -528,32 +522,16 @@ function View:GetBankBags()
 end
 
 -- Run() calls this when the build is ready (immediately, and again once any late
--- item data has loaded). Debounce layout like backpack Items.Updated (BetterBags
--- refresh coalescing) so ContinuableContainer's second pass doesn't double-layout.
+-- item data has loaded). Cached per view so we don't allocate a closure per draw.
 function View:GetScanCallback()
 	if not self._onScan then
-		self._queueDrawLayout = F.DebounceNoArgs(0.05, function()
-			if self.open and self.sections then
-				self:DrawLayout()
-			end
-		end)
 		self._onScan = function(scanner)
 			if not self.open then
 				return
 			end
 			self.sections = scanner.sections
 			self.freeSlots = scanner.freeSlots
-			self._pendingChangeset = scanner.lastChangeset
-			-- First open: main panel is still unsized (0x0). Debouncing layout
-			-- alone meant BANKFRAME_OPENED played the sound while Bagforge
-			-- stayed invisible until close/reopen. Paint immediately when we
-			-- have never laid out; coalesce later ContinuableContainer passes.
-			local main = self.mainContainer
-			if main and not main._lastW then
-				self:DrawLayout()
-			else
-				self._queueDrawLayout()
-			end
+			self:DrawLayout()
 		end
 	end
 	return self._onScan
@@ -591,9 +569,8 @@ function View:BuildWindow()
 		close:SetScript("OnClick", function(_, mouseButton)
 			if mouseButton == "RightButton" then
 				local bank = ns:GetModule("Bank")
-				-- Reset only this view's saved position (not the other bank).
 				if bank then
-					bank:ResetPosition(view.enabledKey or "active")
+					bank:ResetPosition()
 				end
 			else
 				view:Close()
@@ -617,7 +594,7 @@ end
 
 function View:BuildChrome()
 	local frame = self.frame
-	local _, rightX, rowY, btnW, btnGap = self:GetChromeInsets()
+	local leftX, rightX, rowY, btnW, btnGap = self:GetChromeInsets()
 
 	local sort = F.CreateIconButton(frame, btnW, btnW, 655994)
 	sort:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -rightX, rowY)
@@ -730,14 +707,14 @@ function View:EnsureTabSettingsMenu()
 	local menu = CreateFrame("Frame", nil, self.frame, "BankPanelTabSettingsMenuTemplate")
 	menu:SetClampedToScreen(true)
 	menu:SetFrameStrata("DIALOG")
-	menu:SetFrameLevel(F.ClampFrameLevel(self.frame:GetFrameLevel() + 50))
+	menu:SetFrameLevel(self.frame:GetFrameLevel() + 50)
 	if menu.BorderBox then
-		menu.BorderBox:SetFrameLevel(F.ClampFrameLevel(menu:GetFrameLevel() + 5))
+		menu.BorderBox:SetFrameLevel(menu:GetFrameLevel() + 5)
 		if menu.BorderBox.OkayButton then
-			menu.BorderBox.OkayButton:SetFrameLevel(F.ClampFrameLevel(menu.BorderBox:GetFrameLevel() + 5))
+			menu.BorderBox.OkayButton:SetFrameLevel(menu.BorderBox:GetFrameLevel() + 5)
 		end
 		if menu.BorderBox.CancelButton then
-			menu.BorderBox.CancelButton:SetFrameLevel(F.ClampFrameLevel(menu.BorderBox:GetFrameLevel() + 5))
+			menu.BorderBox.CancelButton:SetFrameLevel(menu.BorderBox:GetFrameLevel() + 5)
 		end
 	end
 	menu:Hide()
@@ -831,7 +808,7 @@ function View:BuildTabBar()
 		local tabData = self.bankType and C_Bank and C_Bank.FetchNextPurchasableBankTabData and C_Bank.FetchNextPurchasableBankTabData(self.bankType)
 		GameTooltip:SetOwner(btn, "ANCHOR_TOP")
 		GameTooltip:SetText(BANKSLOTPURCHASE or L["Purchase"])
-		if tabData and GetMoneyString and tabData.tabCost then
+		if tabData and GetMoneyString and tabData.tabCost and F.NotSecret(tabData.tabCost) then
 			GameTooltip:AddLine(GetMoneyString(tabData.tabCost, true), 1, 1, 1)
 		end
 		GameTooltip:Show()
@@ -988,28 +965,20 @@ end
 
 function View:UpdateChrome()
 	local canUse = self.open and self:CanUse()
-	local sortEnabled = canUse and not ns:IsBagSortActive()
-	SetIconButtonEnabled(self.sortButton, sortEnabled)
+	SetIconButtonEnabled(self.sortButton, canUse)
 	SetIconButtonEnabled(self.depositButton, canUse and self:SupportsAutoDeposit())
 	self:UpdateDepositReagentsHighlight()
 	self:UpdateBankFooter()
 end
 
-function View:Draw(dirtyBags, dirtySlotKeys)
+function View:Draw()
 	if not self.frame or not self.open then
 		return
 	end
 
 	-- Scan, then render in the callback: Run() fires immediately and again once
 	-- any late item data has loaded, so the bank refines in place (no polling).
-	self.scanner:Run(self:GetBankBags(), self:GetScanCallback(), dirtyBags, dirtySlotKeys)
-end
-
-function View:ScanAfterSort()
-	if not self.frame or not self.open then
-		return
-	end
-	self.scanner:RefreshAfterSort(self:GetBankBags(), self:GetScanCallback())
+	self.scanner:Run(self:GetBankBags(), self:GetScanCallback())
 end
 
 function View:DrawLayout()
@@ -1018,37 +987,9 @@ function View:DrawLayout()
 	end
 
 	local categories = ns:GetModule("Categories")
-	local cols = ns.db.bank[self.columnsKey] or ns.db.bank.columns
-	if not cols then
-		cols = (self.columnsKey == "warbandColumns") and C.Layout.WARBAND_COLUMNS or C.Layout.BANK_COLUMNS
-	end
+	local cols = ns.db.bank[self.columnsKey] or ns.db.bank.columns or 14
 	local mainCategory = categories and categories:GetMainCategory() or L["Other"]
 	local mainSection = self:FindMainSection(self.sections, mainCategory, categories)
-
-	local changeset = self._pendingChangeset
-	if not changeset and self.scanner then
-		changeset = self.scanner.lastChangeset
-	end
-	self._pendingChangeset = nil
-
-	-- Tab switch: BetterBags sortRequired — don't patch from a stale incremental
-	-- changeset; full Layout so free-slot footer / masonry match the new tab.
-	if self._sortRequired then
-		self._sortRequired = false
-		changeset = nil
-		if self.mainContainer then
-			self.mainContainer._structSig = nil
-			self.mainContainer._paintSig = nil
-			self.mainContainer._lastW = nil
-		end
-		if self.categoryContainers then
-			for _, container in pairs(self.categoryContainers) do
-				container._structSig = nil
-				container._paintSig = nil
-				container._lastW = nil
-			end
-		end
-	end
 
 	self:DrawCategorized({
 		requireOpen = true,
@@ -1057,35 +998,13 @@ function View:DrawLayout()
 		mainTitle = self.title,
 		mainSection = mainSection,
 		columns = cols,
-		perColumn = ns.db.bank.categoriesPerColumn or C.Layout.BANK_CATEGORIES_PER_COLUMN,
+		perColumn = ns.db.bank.categoriesPerColumn,
 		layoutBatchSize = C.Layout.BANK_LAYOUT_BATCH,
 		mainLayoutOpts = {
 			topInset = C.Layout.MAIN_CHROME_TOP,
 			bottomInset = self:GetFooterBottomInset(),
-			freeCount = self:GetDisplayFreeSlots(),
+			freeCount = self.freeSlots,
 		},
-		changeset = changeset,
-	})
-end
-
-function View:RefreshCategoryHeaders()
-	if not (self.open and self.scanner) then
-		return
-	end
-	local changeset = self.scanner.lastChangeset
-	if not changeset then
-		return
-	end
-	local categories = ns:GetModule("Categories")
-	local ContainerWindow = ns.ContainerWindow
-	if not ContainerWindow then
-		return
-	end
-	ContainerWindow.RefreshCategoryHeaders(self, {
-		changeset = changeset,
-		sections = self.sections,
-		drawSections = self.sections,
-		mainName = categories and categories:GetMainCategory(),
 	})
 end
 
@@ -1094,33 +1013,16 @@ function View:Open()
 		return
 	end
 	self.open = true
-	local cols = ns.db.bank[self.columnsKey] or ns.db.bank.columns or C.Layout.BANK_COLUMNS
-	self:EnsureShellSize(cols)
 	self.frame:Show()
 	self:ConfigureSecureBankButtons()
 	self:UpdateChrome()
 	self:ApplyTabBarState()
 	self:UpdateBankFooter()
-	-- Run() builds synchronously; paint now so we don't wait on the 50ms
-	-- _ScheduleScanComplete debounce (backpack Open already Draw()s sync).
 	self:Draw()
-	local scanner = self.scanner
-	local main = self.mainContainer
-	if scanner and main and not main._lastW then
-		self.sections = scanner.sections
-		self.freeSlots = scanner.freeSlots
-		self._pendingChangeset = scanner.lastChangeset
-		self:DrawLayout()
-	end
 end
 
 function View:Close()
 	self.open = false
-	self.depositTargetBag = nil
-	self.bankMoneyPending = false
-	-- Drop stale layout inputs so the next Open doesn't paint the previous scan.
-	self.sections = nil
-	self._pendingChangeset = nil
 	if self.tabSettingsMenu and self.tabSettingsMenu:IsShown() then
 		self.tabSettingsMenu:Hide()
 	end
@@ -1137,9 +1039,6 @@ function View:Close()
 			container:Reset()
 		end
 	end
-	if self.mainContainer and self.mainContainer.AbortLayout then
-		self.mainContainer:AbortLayout()
-	end
 	local bank = ns:GetModule("Bank")
 	if bank and bank.NotifyBackpackBankContext then
 		bank:NotifyBackpackBankContext()
@@ -1147,26 +1046,16 @@ function View:Close()
 end
 
 function View:InvalidateLayout()
-	if self.mainContainer and self.mainContainer.AbortLayout then
-		self.mainContainer:AbortLayout()
-	elseif self.mainContainer then
-		self.mainContainer._structSig = nil
-		self.mainContainer._paintSig = nil
+	if self.mainContainer then
 		self.mainContainer._sig = nil
 		self.mainContainer._lastW = nil
 		self.mainContainer._lastH = nil
 	end
 	if self.categoryContainers then
 		for _, container in pairs(self.categoryContainers) do
-			if container.AbortLayout then
-				container:AbortLayout()
-			else
-				container._structSig = nil
-				container._paintSig = nil
-				container._sig = nil
-				container._lastW = nil
-				container._lastH = nil
-			end
+			container._sig = nil
+			container._lastW = nil
+			container._lastH = nil
 		end
 	end
 end
@@ -1195,15 +1084,11 @@ function View:Relayout(opts)
 	end
 end
 
-function View:RefreshIfOpen(rescan, dirtyBags, dirtySlotKeys)
+function View:RefreshIfOpen()
 	if self.open then
 		self:UpdateTabBar()
 		self:UpdateBankFooter()
-		if rescan == false and self.sections then
-			self:DrawLayout()
-		else
-			self:Draw(dirtyBags, dirtySlotKeys)
-		end
+		self:Draw()
 	end
 end
 
@@ -1217,7 +1102,6 @@ function View:RefreshFiltered()
 		return
 	end
 	if self.scanner:RefreshFiltered() then
-		self._pendingChangeset = self.scanner.lastChangeset
 		self:DrawLayout()
 	end
 end
@@ -1246,50 +1130,18 @@ function View:Sort()
 	if not self:CanUse() then
 		return
 	end
-	if ns:IsBagSortActive() then
-		return
-	end
 	if C_Container.SortBank and self.bankType then
-		if not ns:BeginBagSort() then
-			return
-		end
 		if PlaySound and SOUNDKIT then
 			PlaySound(SOUNDKIT.UI_BAG_SORTING_01)
 		end
+		ns:BeginBagSort()
 		local bank = ns:GetModule("Bank")
 		if bank then
 			ns:ScheduleBagSortFlush("bank", function()
-				local open = bank:OpenView()
-				if open and open.ScanAfterSort then
-					open:ScanAfterSort()
-				else
-					bank:RefreshIfOpen()
-				end
+				bank:RefreshIfOpen()
 			end)
 		end
-		self:UpdateChrome()
-
-		local bags = self:GetBankBags()
-		local function DoBlizzardSort()
-			-- Re-arm after CombineStacks so the flush window covers SortBank.
-			if bank then
-				ns:ScheduleBagSortFlush("bank", function()
-					local open = bank:OpenView()
-					if open and open.ScanAfterSort then
-						open:ScanAfterSort()
-					else
-						bank:RefreshIfOpen()
-					end
-				end)
-			end
-			C_Container.SortBank(self.bankType)
-		end
-		local combine = ns.CombineStacks
-		if combine and combine.RunThen and bags and #bags > 0 then
-			combine.RunThen(bags, DoBlizzardSort)
-		else
-			DoBlizzardSort()
-		end
+		C_Container.SortBank(self.bankType)
 	end
 end
 

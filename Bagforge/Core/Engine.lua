@@ -71,30 +71,6 @@ function moduleMeta:RegisterEvent(event, handler)
 	return ns:RegisterEvent(event, wrapper)
 end
 
---- Register `event` and append `{ event, wrapper }` to `handles` for OnDisable.
-function moduleMeta:TrackEvent(handles, event, handler)
-	handles[#handles + 1] = { event, self:RegisterEvent(event, handler) }
-end
-
---- Track a central `ns:RegisterEvent` callback (not module-bound) for teardown.
-function ns:TrackEvent(handles, event, callback)
-	handles[#handles + 1] = { event, ns:RegisterEvent(event, callback) }
-end
-
---- Unregister every `{ event, wrapper }` in `handles`, then wipe the table.
-function ns:UnregisterModuleEventHandles(handles)
-	if not handles then
-		return
-	end
-	for i = 1, #handles do
-		local h = handles[i]
-		if h then
-			ns:UnregisterEvent(h[1], h[2])
-		end
-	end
-	wipe(handles)
-end
-
 --- Whether this module is enabled in the active profile. Modules that opt into
 --- the toggle convention store `enable` under `db[dbKey]`.
 function moduleMeta:IsEnabled()
@@ -284,99 +260,12 @@ local sortFlushTimer
 local sortFlushParts = {}
 
 function ns:BeginBagSort()
-	if self._bagSortActive then
-		return false
-	end
 	self._bagSortActive = true
-	self._pendingSortFlush = true
-	self:TriggerCallback("Sort.StateChanged", true)
 	self:ScheduleBagSortFlush()
-	return true
 end
 
 function ns:IsBagSortActive()
 	return self._bagSortActive
-end
-
-function ns:IsSortFlush()
-	return self._wasSortFlush == true
-end
-
---- Register a post-sort flush (e.g. backpack + bank). Multiple callers share
---- one trailing timer so neither overwrites the other.
-
---- Route a settings or overlay change to the narrowest safe refresh path.
---- opts: { paint?, headers?, layout?, reclassify?, chrome?, zone? }
-function ns:UIRefresh(opts)
-	if not opts then
-		return
-	end
-	local zone = opts.zone or (ns.C and ns.C.RefreshZone and ns.C.RefreshZone.all) or "all"
-	local backpack = ns:GetModule("Backpack")
-	local bank = ns:GetModule("Bank")
-
-	if opts.reclassify then
-		if ns.ReclassifyBags then
-			ns:ReclassifyBags()
-		else
-			ns:RefreshBags(true)
-		end
-		return
-	end
-
-	if opts.paint then
-		ns:RefreshBags(false)
-		return
-	end
-
-	local function backpackShown()
-		return backpack and backpack.IsShown and backpack:IsShown()
-	end
-
-	local function bankShown()
-		return bank and bank.OpenView and bank:OpenView()
-	end
-
-	local touchBackpack = zone == "all" or zone == "backpack"
-	local touchBank = zone == "all" or zone == "bank"
-
-	if opts.headers then
-		if touchBackpack and backpackShown() and backpack.RefreshCategoryHeaders then
-			backpack:RefreshCategoryHeaders()
-		end
-		if touchBank and bankShown() and bank.RefreshCategoryHeaders then
-			bank:RefreshCategoryHeaders()
-		end
-		return
-	end
-
-	if opts.layout then
-		if touchBackpack and backpackShown() and backpack.Draw then
-			backpack:Draw()
-		end
-		if touchBank and bankShown() and bank.RefreshIfOpen then
-			bank:RefreshIfOpen()
-		end
-		return
-	end
-
-	if opts.chrome then
-		if touchBackpack and backpackShown() then
-			if backpack.ApplyBagBarState then
-				backpack:ApplyBagBarState()
-			end
-			if backpack.UpdateToolbarChrome then
-				backpack:UpdateToolbarChrome()
-			end
-			if backpack.UpdateMoneyFrame then
-				backpack:UpdateMoneyFrame()
-			end
-		end
-		if touchBank and bankShown() and bank.RefreshTabBars then
-			bank:RefreshTabBars()
-		end
-		return
-	end
 end
 
 --- Register a post-sort flush (e.g. backpack + bank). Multiple callers share
@@ -391,15 +280,10 @@ function ns:ScheduleBagSortFlush(part, callback)
 	sortFlushTimer = C_Timer.NewTimer(0.35, function()
 		sortFlushTimer = nil
 		self._bagSortActive = false
-		local wasSortFlush = self._pendingSortFlush
-		self._pendingSortFlush = false
-		self._wasSortFlush = wasSortFlush
 		for _, fn in pairs(sortFlushParts) do
 			fn()
 		end
 		wipe(sortFlushParts)
-		self._wasSortFlush = nil
-		self:TriggerCallback("Sort.StateChanged", false)
 	end)
 end
 

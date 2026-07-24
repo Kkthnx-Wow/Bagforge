@@ -22,16 +22,17 @@
 
 	Each query string compiles once to a predicate(entry) closure and is cached
 	(the set of saved searches is small). Compilation is pure - it only reads
-	scanned entry fields and never touches frames. ns.Search.Match(query, entry)
-	is the only thing classifiers call.
+	scanned entry fields - so it never touches frames or secret values without a
+	guard. ns.Search.Match(query, entry) is the only thing classifiers call.
 
 	Modelled on BetterBags' search categories (search/query.lua), trimmed to the
 	handful of fields a bag actually exposes instead of a full expression tree.
 --]]
 
 local _, ns = ...
+local F = ns.F
 
-local pairs = pairs
+local pairs, ipairs = pairs, ipairs
 local tonumber, type = tonumber, type
 local wipe = wipe
 local tconcat = table.concat
@@ -76,27 +77,27 @@ do
 end
 
 -- ---------------------------------------------------------------------------
--- Field accessors
+-- Field accessors (read-only; secret-guard the itemID test)
 -- ---------------------------------------------------------------------------
 local function NumField(entry, key)
 	if key == "ilvl" or key == "level" or key == "itemlevel" then
 		local v = entry.ilvl
-		return v
+		return F.NotSecret(v) and v or nil
 	elseif key == "id" then
 		local id = entry.itemID
-		return id
+		return (id and F.NotSecret(id)) and id or nil
 	elseif key == "q" or key == "quality" then
 		local v = entry.quality
-		return v
+		return F.NotSecret(v) and v or nil
 	elseif key == "exp" or key == "expansion" then
 		local v = entry.expacID
-		return v
+		return F.NotSecret(v) and v or nil
 	elseif key == "count" or key == "qty" then
 		local v = entry.count
-		return v
+		return F.NotSecret(v) and v or nil
 	elseif key == "stack" or key == "maxstack" then
 		local v = entry.maxStack
-		return v
+		return F.NotSecret(v) and v or nil
 	end
 	return nil
 end
@@ -114,17 +115,20 @@ local function StrField(entry, key)
 	elseif key == "bind" then
 		v = entry.bindLabel
 	end
-	return v
+	if v and F.CanAccessValue(v) then
+		return v
+	end
+	return nil
 end
 
 local function IsJunk(entry)
 	local q = entry.quality
-	if q == ITEM_QUALITY.Poor then
+	if F.NotSecret(q) and q == ITEM_QUALITY.Poor then
 		return true
 	end
 	local cj = ns.global and ns.global.customJunk
 	local id = entry.itemID
-	return (cj and id and cj[id]) and true or false
+	return (cj and id and F.NotSecret(id) and cj[id]) and true or false
 end
 
 -- Bareword flags: token == flag name, no value.
@@ -149,22 +153,20 @@ local FLAGS = {
 	end,
 	junk = IsJunk,
 	gear = function(e)
-		local classID = e.classID
-		return classID == WEAPON or classID == ARMOR
+		return e.classID == WEAPON or e.classID == ARMOR
 	end,
 	equipment = function(e)
-		local classID = e.classID
-		return classID == WEAPON or classID == ARMOR
+		return e.classID == WEAPON or e.classID == ARMOR
 	end,
 	stackable = function(e)
 		local maxStack = e.maxStack
-		return maxStack ~= nil and maxStack > 1
+		return F.NotSecret(maxStack) and maxStack > 1
 	end,
 	bound = function(e)
 		return e.isBound == true
 	end,
 	unbound = function(e)
-		return e.isBound ~= true
+		return not e.isBound
 	end,
 }
 
@@ -218,7 +220,7 @@ local function ReadTooltipText(entry)
 	for i = 1, #data.lines do
 		local line = data.lines[i]
 		local text = line and line.leftText
-		if text then
+		if text and F.CanAccessValue(text) then
 			lineCount = lineCount + 1
 			lines[lineCount] = slower(text)
 		end
@@ -264,23 +266,23 @@ end
 local function NumMatcher(op, n)
 	if op == ">" then
 		return function(v)
-			return v ~= nil and v > n
+			return v ~= nil and F.NotSecret(v) and v > n
 		end
 	elseif op == ">=" then
 		return function(v)
-			return v ~= nil and v >= n
+			return v ~= nil and F.NotSecret(v) and v >= n
 		end
 	elseif op == "<" then
 		return function(v)
-			return v ~= nil and v < n
+			return v ~= nil and F.NotSecret(v) and v < n
 		end
 	elseif op == "<=" then
 		return function(v)
-			return v ~= nil and v <= n
+			return v ~= nil and F.NotSecret(v) and v <= n
 		end
 	end
 	return function(v)
-		return v ~= nil and v == n
+		return v ~= nil and F.NotSecret(v) and v == n
 	end -- "=" / ":"
 end
 
@@ -312,12 +314,8 @@ end
 
 local function NameContains(needle)
 	return function(entry)
-		local idx = entry.searchIndex
-		if idx and sfind(idx, needle, 1, true) then
-			return true
-		end
 		local n = entry.name
-		if not n then
+		if not (n and F.CanAccessValue(n)) then
 			return false
 		end
 		return sfind(slower(n), needle, 1, true) ~= nil
@@ -444,29 +442,4 @@ end
 --- Drop cached bag-item tooltip text (call on bag membership changes).
 function Search.InvalidateTooltips()
 	wipe(tooltipCache)
-end
-
---- Pre-build a lowercase search blob on each entry at scan time (name, category,
---- type, bind, ilvl) so bareword saved-search tokens avoid re-querying fields.
-function Search.IndexEntry(entry)
-	if not entry then
-		return
-	end
-	local parts = {}
-	local function add(s)
-		if s then
-			parts[#parts + 1] = slower(s)
-		end
-	end
-	add(entry.name)
-	add(entry.category)
-	add(entry.itemType)
-	add(entry.itemSubType)
-	add(entry.bindLabel)
-	add(entry.itemEquipLoc)
-	local ilvl = entry.ilvl
-	if ilvl then
-		parts[#parts + 1] = tostring(ilvl)
-	end
-	entry.searchIndex = #parts > 0 and tconcat(parts, "\0") or nil
 end

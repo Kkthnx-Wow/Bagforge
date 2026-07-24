@@ -14,9 +14,6 @@
 
 	Scan calls `Recent:IsEntryNew(bag, slot, guid)` for category routing; it does
 	not read GetContainerItemInfo.isNewItem (stale during login bursts).
-
-	Event ownership: Items owns BAG_UPDATE_DELAYED (and calls Recent:Scan from
-	Items:Scan). Recent owns BAG_NEW_ITEMS_UPDATED for RefreshRecentFlags only.
 --]]
 
 local _, ns = ...
@@ -97,7 +94,7 @@ local function BlizzardIsNewItem(bag, slot)
 		return false
 	end
 	local isNew = C_NewItems.IsNewItem(bag, slot)
-	return isNew == true
+	return F.CanAccessValue(isNew) and isNew == true
 end
 
 local function RemoveBlizzardNewItem(bag, slot)
@@ -233,47 +230,25 @@ function Recent:ClearBackpack()
 end
 
 function Recent:OnEnable()
-	if self._hooksInstalled then
-		return
-	end
-	self._hooksInstalled = true
-	self._eventHandles = self._eventHandles or {}
-
-	-- GUID baseline on login/zone. Bag loot GUID walks are owned by Items
-	-- (BAG_UPDATE_DELAYED → Recent:Scan); we only own new-item flag refresh.
+	local items = ns:GetModule("Items")
 	local debouncedScan = F.DebounceTrailingNoArgs(0.05, function()
-		Recent:Scan()
-	end)
-	local debouncedRecentFlags = F.DebounceTrailingNoArgs(0.05, function()
-		local items = ns:GetModule("Items")
-		if not (items and items.AnyWindowOpen and items:AnyWindowOpen()) then
+		-- When a bag window is open, Items:Scan() runs Recent:Scan() first.
+		if items and items.AnyWindowOpen and items:AnyWindowOpen() then
 			return
 		end
-		-- Items already ran Recent:Scan on the delayed bag flush; only reclassify.
-		if ns.RefreshRecentFlags then
-			ns:RefreshRecentFlags()
-		end
+		Recent:Scan()
 	end)
 
-	self:TrackEvent(self._eventHandles, "PLAYER_LOGIN", debouncedScan)
-	self:TrackEvent(self._eventHandles, "PLAYER_ENTERING_WORLD", debouncedScan)
-	self:TrackEvent(self._eventHandles, "BAG_NEW_ITEMS_UPDATED", debouncedRecentFlags)
+	self:RegisterEvent("PLAYER_LOGIN", debouncedScan)
+	self:RegisterEvent("PLAYER_ENTERING_WORLD", debouncedScan)
+	self:RegisterEvent("BAG_UPDATE_DELAYED", debouncedScan)
+	self:RegisterEvent("BAG_NEW_ITEMS_UPDATED", debouncedScan)
 
 	if C_Timer and C_Timer.After then
 		C_Timer.After(STARTUP_BASELINE_SECONDS, function()
-			if self._hooksInstalled then
-				Recent:EndStartup()
-			end
+			Recent:EndStartup()
 		end)
 	end
 
 	self:Scan()
-end
-
-function Recent:OnDisable()
-	if not self._hooksInstalled then
-		return
-	end
-	self._hooksInstalled = false
-	ns:UnregisterModuleEventHandles(self._eventHandles)
 end

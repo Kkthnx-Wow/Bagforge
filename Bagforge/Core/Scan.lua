@@ -284,6 +284,7 @@ function Scan.ClearItemCaches()
 	wipe(nameCache)
 	wipe(expacCache)
 	wipe(sellPriceCache)
+	F.ClearItemInfoCache()
 	if ItemLoader and ItemLoader.Clear then
 		ItemLoader.Clear()
 	end
@@ -320,8 +321,9 @@ end
 --   NAME (so two categories that share an order stay contiguous). Within a
 --   category the player's "Item Sort" choice selects a key chain (class, slot,
 --   subclass, ilvl, expansion, quality, name, itemID) rather than a single-field
---   comparator. Custom class/subclass/slot order tables come from --   ItemFields.lua (Phraxik's ordering). Plugin sort modes still register a
---   bespoke comparator via Scan.RegisterWithin.
+--   comparator. The class/subclass/slot order tables below set the default
+--   grouping. Plugin sort modes still register a bespoke comparator via
+--   Scan.RegisterWithin.
 -- ---------------------------------------------------------------------------
 local function BuildSortMap(list)
 	local map = {}
@@ -632,7 +634,7 @@ local function SafeCompare(a, b)
 	if aid and bid then
 		return aid < bid
 	end
-	return SlotKey(a.bag, a.slot) < SlotKey(b.bag, b.slot)
+	return F.SlotKey(a.bag, a.slot) < F.SlotKey(b.bag, b.slot)
 end
 
 local function SlotKey(bag, slot)
@@ -788,8 +790,8 @@ end
 
 --- Populate one entry from a live bag slot. When `fastMeta` is set, reuse prior
 --- classification when an itemID match is available (post-Blizzard-sort path).
-local function PopulateEntryFromSlot(self, entry, bag, slot, ctx)
-	local info = C_Container.GetContainerItemInfo(bag, slot)
+local function PopulateEntryFromSlot(self, entry, bag, slot, ctx, info)
+	info = info or C_Container.GetContainerItemInfo(bag, slot)
 	local itemID = info and info.itemID
 	if not itemID then
 		itemID = GetContainerItemID(bag, slot)
@@ -845,6 +847,7 @@ local function PopulateEntryFromSlot(self, entry, bag, slot, ctx)
 	entry.slot = slot
 	entry.key = SlotKey(bag, slot)
 	entry.itemID = itemID
+	entry._mergedSlots = nil
 	entry.quality = quality or 0
 	entry.icon = info and info.iconFileID
 	if not entry.icon and instant and instant.itemTexture then
@@ -900,20 +903,8 @@ end
 local function CountBagFreeAndTotal(bags)
 	local free, total = 0, 0
 	for _, bag in ipairs(bags) do
-		local numSlots = C_Container.GetContainerNumSlots(bag) or 0
-		total = total + numSlots
-		for slot = 1, numSlots do
-			local info = C_Container.GetContainerItemInfo(bag, slot)
-			local itemID = info and info.itemID
-			if not itemID then
-				itemID = GetContainerItemID(bag, slot)
-			end
-			if not itemID then
-				if not info or not info.iconFileID then
-					free = free + 1
-				end
-			end
-		end
+		total = total + (C_Container.GetContainerNumSlots(bag) or 0)
+		free = free + (C_Container.GetContainerNumFreeSlots(bag) or 0)
 	end
 	return free, total
 end
@@ -943,7 +934,7 @@ local function ScanBagIntoSlots(self, bag, buildCtx)
 		end
 		if itemID then
 			local entry = self:_AcquireEntry()
-			if PopulateEntryFromSlot(self, entry, bag, slot, buildCtx) then
+			if PopulateEntryFromSlot(self, entry, bag, slot, buildCtx, info) then
 				self.slots[#self.slots + 1] = entry
 			end
 		end
@@ -1182,12 +1173,7 @@ function meta:_ResetChangeset()
 end
 
 local function SlotHasItem(bag, slot)
-	local info = C_Container.GetContainerItemInfo(bag, slot)
-	local itemID = info and info.itemID
-	if not itemID then
-		itemID = GetContainerItemID(bag, slot)
-	end
-	return itemID
+	return GetContainerItemID(bag, slot)
 end
 
 local function SlotSnapshotChanged(bag, slot, old)
@@ -1342,7 +1328,7 @@ function meta:_BuildSlotDiff(bags, dirtyBags, dirtySlotKeys)
 		end
 	else
 		for _, bag in ipairs(bags) do
-			if dirtyBags[bag] then
+			if dirtyBags and dirtyBags[bag] then
 				local numSlots = C_Container.GetContainerNumSlots(bag) or 0
 				for slot = 1, numSlots do
 					ProcessSlotDiff(self, bag, slot, buildCtx, changeset, stackMerge, junkCategory)
@@ -1462,7 +1448,7 @@ function meta:RefreshAfterSort(bags, onComplete)
 			if itemID then
 				occupied = occupied + 1
 				local entry = self:_AcquireEntry()
-				if PopulateEntryFromSlot(self, entry, bag, slot, ctx) then
+				if PopulateEntryFromSlot(self, entry, bag, slot, ctx, info) then
 					self.slots[#self.slots + 1] = entry
 				end
 			elseif not info or not info.iconFileID then
@@ -1635,6 +1621,24 @@ function meta:Run(bags, onComplete, dirtyBags, dirtySlotKeys)
 		return self
 	end
 
+	-- Callers reuse their dirty tables between flushes, so the deferred diff
+	-- keeps its own copy.
+	local lateBags, lateKeys
+	if usePartial then
+		if dirtyBags then
+			lateBags = {}
+			for bag in pairs(dirtyBags) do
+				lateBags[bag] = true
+			end
+		end
+		if dirtySlotKeys then
+			lateKeys = {}
+			for key in pairs(dirtySlotKeys) do
+				lateKeys[key] = true
+			end
+		end
+	end
+
 	container:ContinueOnLoad(function()
 		-- A newer scan already ran, let it own the result.
 		if self._scanGen ~= gen then
@@ -1645,7 +1649,7 @@ function meta:Run(bags, onComplete, dirtyBags, dirtySlotKeys)
 			itemInfo:InvalidateUnusableCaches()
 		end
 		if usePartial then
-			self:_BuildSlotDiff(bags, dirtyBags, dirtySlotKeys)
+			self:_BuildSlotDiff(bags, lateBags, lateKeys)
 		else
 			self:_Build(bags)
 		end
@@ -1701,7 +1705,7 @@ end
 --- O(1) via the slotsByKey hash built at the end of _Build.
 function meta:RefreshLock(bag, slot)
 	local entry = self.slotsByKey[SlotKey(bag, slot)]
-	if not entry then
+	if not entry and ns.db and ns.db.organize and ns.db.organize.stackMerge then
 		for i = 1, #self.slots do
 			local root = self.slots[i]
 			local merged = root._mergedSlots
@@ -1873,6 +1877,7 @@ function meta:RefreshItemID(itemID, accumulate)
 	nameCache[itemID] = nil
 	expacCache[itemID] = nil
 	sellPriceCache[itemID] = nil
+	F.InvalidateItemInfo(itemID)
 
 	local entries = self.entriesByItemID[itemID]
 	if not entries or #entries == 0 then

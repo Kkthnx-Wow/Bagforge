@@ -86,11 +86,7 @@ local function GetBackpackExtendedSlotCount()
 	if not IsAccountSecured or IsAccountSecured() then
 		return 0
 	end
-	if not BagIndex or not C_Container or not C_Container.GetContainerNumSlots then
-		return 0
-	end
-	local current = C_Container.GetContainerNumSlots(BagIndex.Backpack) or 0
-	return max(0, (current + 4) - current)
+	return 4
 end
 
 local function HideBackpackExtendedSlots(container)
@@ -199,10 +195,9 @@ local function FreeSlot_Deposit(free)
 	for _, bag in ipairs(bags) do
 		local numSlots = C_Container.GetContainerNumSlots(bag) or 0
 		for slot = 1, numSlots do
-			local info = C_Container.GetContainerItemInfo(bag, slot)
 			-- Empty only. Occupied slots used to match here and stole the cursor
 			-- onto the first item in the bag - not the free slot.
-			if not info or not info.itemID then
+			if not C_Container.GetContainerItemID(bag, slot) then
 				C_Container.PickupContainerItem(bag, slot)
 				return
 			end
@@ -459,6 +454,17 @@ local function PaintHashEntry(h, e)
 	h = FoldHash(h, e.isNewItem == true and 1 or 0)
 	h = FoldHash(h, e.isBound == true and 1 or 0)
 	h = FoldHash(h, e.isUnusable == true and 1 or 0)
+	-- Remaining overlay flags packed into one fold: grey junk, upgrade arrow, ilvl
+	-- and bind label visibility, quest state, readable.
+	local flags = (e.showGreyJunk and 1 or 0)
+		+ (e.isUpgrade and 2 or 0)
+		+ (e.showIlvl and 4 or 0)
+		+ (e.quest and 8 or 0)
+		+ (e.isActiveQuest and 16 or 0)
+		+ (e.readable and 32 or 0)
+		+ (e.showBindLabel and 64 or 0)
+	h = FoldHash(h, flags)
+	h = SafeFold(h, e.questID)
 	h = SafeFold(h, e.icon)
 	if e.bindLabel then
 		for j = 1, #e.bindLabel do

@@ -1041,14 +1041,21 @@ function ItemButton:OnEnable()
 			ItemButton:RefreshLock(bag, slot)
 		end
 	end)
-	ns:TrackEvent(handles, "UNIT_QUEST_LOG_CHANGED", function(_, unit)
-		if unit == "player" then
-			ItemButton:RefreshQuests()
+	-- Quest log churn is constant while questing, so coalesce it and skip the
+	-- per-button API walk entirely while every bag window is closed.
+	local refreshQuests = F.DebounceNoArgs(0.1, function()
+		local items = ns:GetModule("Items")
+		if items and items.AnyWindowOpen and not items:AnyWindowOpen() then
+			return
 		end
-	end)
-	ns:TrackEvent(handles, "QUEST_ACCEPTED", function()
 		ItemButton:RefreshQuests()
 	end)
+	ns:TrackEvent(handles, "UNIT_QUEST_LOG_CHANGED", function(_, unit)
+		if unit == "player" then
+			refreshQuests()
+		end
+	end)
+	ns:TrackEvent(handles, "QUEST_ACCEPTED", refreshQuests)
 
 	ns:TrackEvent(handles, "PLAYER_REGEN_ENABLED", function()
 		if not combatLayoutPending then
@@ -1155,6 +1162,11 @@ FindSlotButton = function(bag, slot)
 	local button = ItemButton:GetSlotButton(bag, slot)
 	if button then
 		return button
+	end
+	-- Merged-away stacks only exist while stack merge is on.
+	local organize = ns.db and ns.db.organize
+	if not (organize and organize.stackMerge) then
+		return nil
 	end
 	for _, parent in pairs(slotButtons) do
 		local entry = parent.entry

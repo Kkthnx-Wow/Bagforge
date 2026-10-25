@@ -338,32 +338,32 @@ function F.DebounceTrailingNoArgs(delay, func)
 	end
 end
 
-local bucketTimers = {}
-local bucketArgs = {}
-local bucketArgCount = 0
-
 --- Bucket rapid-fire events: each fire resets the timer.
---- `handler` runs once after `delay` seconds of quiet. Registers on the
---- shared ns event frame.
+--- `handler` runs once after `delay` seconds of quiet with the last fire's
+--- arguments. Registers on the shared ns event frame. Every bucket owns its
+--- timer and argument list, so two buckets never trample each other.
 --- Returns the registered callback so callers can UnregisterEvent on teardown.
 function F.BucketEvent(event, delay, handler)
 	if not (event and handler) then
 		return
 	end
 	delay = delay or 0.2
+	local timer
+	local args = {}
+	local argCount = 0
+	local function fire()
+		timer = nil
+		handler(unpack(args, 1, argCount))
+	end
 	local callback = function(...)
-		bucketArgCount = select("#", ...)
-		for i = 1, bucketArgCount do
-			bucketArgs[i] = select(i, ...)
+		argCount = select("#", ...)
+		for i = 1, argCount do
+			args[i] = select(i, ...)
 		end
-		local timer = bucketTimers[event]
 		if timer and timer.Cancel then
 			timer:Cancel()
 		end
-		bucketTimers[event] = C_Timer.NewTimer(delay, function()
-			bucketTimers[event] = nil
-			handler(unpack(bucketArgs, 1, bucketArgCount))
-		end)
+		timer = C_Timer.NewTimer(delay, fire)
 	end
 	return ns:RegisterEvent(event, callback)
 end
@@ -380,7 +380,6 @@ local hoverFrame
 local hoverTarget
 local hoverReadyAt = 0
 local tooltipShownButton
-local GameTooltip = _G["GameTooltip"]
 local ContainerFrameItemButtonMixin = _G["ContainerFrameItemButtonMixin"]
 
 local function GetBagSlot(button)
@@ -652,8 +651,6 @@ end
 --   Protected APIs must run from Blizzard's untainted OnClick path. Addon
 --   buttons use InsecureActionButtonTemplate + clickbutton forwarding.
 -- ---------------------------------------------------------------------------
-local InCombatLockdown = _G["InCombatLockdown"]
-
 function F.GetBlizzardBankPanel()
 	local bankFrame = _G.BankFrame
 	return bankFrame and bankFrame.BankPanel
@@ -802,7 +799,6 @@ function F.DebugBankMoney(view, tag, extra)
 		return
 	end
 
-	local format = string.format
 	local prefix = format("|cffaaaaaa[BankMoney:%s]|r", tag or "?")
 	local C_Bank = _G.C_Bank
 	local bankType = view and view.bankType
@@ -1075,6 +1071,23 @@ function F.AnchorOverlayCorner(overlay, parent, corner, inset)
 	end
 end
 
+-- Per-itemID record caches. GetItemInfo is a multi-return API, so every call
+-- would otherwise build an 18-field table, and the scanner asks once per slot.
+-- Records looked up by numeric itemID are shared and must be treated as read-only.
+-- Link lookups skip the cache because they carry instance data (scaled ilvl).
+local itemRecordCache = {}
+local itemInstantCache = {}
+
+--- Drop every cached GetItemInfo record (zone change, bulk invalidation).
+function F.ClearItemInfoCache()
+	wipe(itemRecordCache)
+end
+
+--- Drop one itemID's cached record (GET_ITEM_INFO_RECEIVED).
+function F.InvalidateItemInfo(itemID)
+	itemRecordCache[itemID] = nil
+end
+
 --- Normalize C_Item.GetItemInfo for Midnight (ItemInfo table) and older
 --- multi-return callers. Field names match Blizzard ItemDocumentation.lua.
 --- Returns nil when data is not cached yet.
@@ -1082,33 +1095,46 @@ function F.GetItemInfoRecord(itemIDOrLink)
 	if not (itemIDOrLink and C_Item and C_Item.GetItemInfo) then
 		return nil
 	end
+	local byID = type(itemIDOrLink) == "number"
+	if byID then
+		local hit = itemRecordCache[itemIDOrLink]
+		if hit then
+			return hit
+		end
+	end
 	local a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q, r = C_Item.GetItemInfo(itemIDOrLink)
 	if not a then
 		return nil
 	end
+	local record
 	if type(a) == "table" then
-		return a
+		record = a
+	else
+		record = {
+			itemName = a,
+			itemLink = b,
+			itemQuality = c,
+			itemLevel = d,
+			itemMinLevel = e,
+			itemType = f,
+			itemSubType = g,
+			itemStackCount = h,
+			itemEquipLoc = i,
+			itemTexture = j,
+			sellPrice = k,
+			classID = l,
+			subclassID = m,
+			bindType = n,
+			expansionID = o,
+			setID = p,
+			isCraftingReagent = q,
+			itemDescription = r,
+		}
 	end
-	return {
-		itemName = a,
-		itemLink = b,
-		itemQuality = c,
-		itemLevel = d,
-		itemMinLevel = e,
-		itemType = f,
-		itemSubType = g,
-		itemStackCount = h,
-		itemEquipLoc = i,
-		itemTexture = j,
-		sellPrice = k,
-		classID = l,
-		subclassID = m,
-		bindType = n,
-		expansionID = o,
-		setID = p,
-		isCraftingReagent = q,
-		itemDescription = r,
-	}
+	if byID then
+		F.CacheSet(itemRecordCache, itemIDOrLink, record, 2000)
+	end
+	return record
 end
 
 --- Normalize C_Item.GetItemInfoInstant. Blizzard documents a *different* shape
@@ -1119,13 +1145,22 @@ function F.GetItemInfoInstantRecord(itemIDOrLink)
 	if not (itemIDOrLink and C_Item and C_Item.GetItemInfoInstant) then
 		return nil
 	end
+	-- Instant data is static per itemID, so numeric lookups are cached for good.
+	local byID = type(itemIDOrLink) == "number"
+	if byID then
+		local hit = itemInstantCache[itemIDOrLink]
+		if hit then
+			return hit
+		end
+	end
 	local a, b, c, d, e, f, g = C_Item.GetItemInfoInstant(itemIDOrLink)
 	if not a then
 		return nil
 	end
+	local record
 	if type(a) == "table" then
 		local sub = a.subclassID or a.subClassID
-		return {
+		record = {
 			itemID = a.itemID,
 			itemType = a.itemType,
 			itemSubType = a.itemSubType,
@@ -1135,17 +1170,22 @@ function F.GetItemInfoInstantRecord(itemIDOrLink)
 			subclassID = sub,
 			subClassID = sub,
 		}
+	else
+		record = {
+			itemID = a,
+			itemType = b,
+			itemSubType = c,
+			itemEquipLoc = d,
+			itemTexture = e,
+			classID = f,
+			subclassID = g,
+			subClassID = g,
+		}
 	end
-	return {
-		itemID = a,
-		itemType = b,
-		itemSubType = c,
-		itemEquipLoc = d,
-		itemTexture = e,
-		classID = f,
-		subclassID = g,
-		subClassID = g,
-	}
+	if byID then
+		F.CacheSet(itemInstantCache, itemIDOrLink, record, 3000)
+	end
+	return record
 end
 
 --- Item ID from a full item hyperlink (stable across API return-shape changes).

@@ -200,7 +200,7 @@ local function DisableMoneyPickup(money)
 	for i = 1, #MONEY_COIN_BUTTONS do
 		local button = money[MONEY_COIN_BUTTONS[i]]
 		if button then
-			button:SetScript("OnClick", nop)
+			button:SetScript("OnClick", nil)
 			button:EnableMouse(false)
 		end
 	end

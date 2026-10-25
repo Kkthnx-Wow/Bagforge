@@ -11,8 +11,10 @@ local C, L = ns.C, ns.L
 local CreateFrame = CreateFrame
 local InCombatLockdown = InCombatLockdown
 local C_Container = C_Container
+local C_Item = C_Item
 
 local GetInventoryItemTexture = GetInventoryItemTexture
+local GetInventoryItemID = GetInventoryItemID
 local GetInventoryItemQuality = GetInventoryItemQuality
 local IsInventoryItemLocked = IsInventoryItemLocked
 local PutItemInBag = PutItemInBag
@@ -332,6 +334,17 @@ function BagBar:CreateBagSlotButton(parent, bagID)
 	return button
 end
 
+-- Container subclass of the bag worn in an inventory slot (herb, mining,
+-- reagent...). The API has no per-bag type call, the item record carries it.
+local function BagSubClass(invID)
+	local itemID = GetInventoryItemID("player", invID)
+	if not itemID then
+		return nil
+	end
+	local _, _, _, _, _, _, subClassID = C_Item.GetItemInfoInstant(itemID)
+	return subClassID
+end
+
 function BagBar:UpdateBagBar()
 	if not self.bagButtons then
 		return
@@ -346,9 +359,8 @@ function BagBar:UpdateBagBar()
 		local typeTint = button.typeTint
 		if icon then
 			button.slotBG:Hide()
-			if useColors and typeTint and C_Container.GetBagType then
-				local bagType = C_Container.GetBagType(button.bagID)
-				local color = bagType and SPECIAL_BAG_COLORS[bagType]
+			if useColors and typeTint then
+				local color = SPECIAL_BAG_COLORS[BagSubClass(button.invID)]
 				if color then
 					typeTint:SetColorTexture(color[1], color[2], color[3], color[4])
 					typeTint:Show()

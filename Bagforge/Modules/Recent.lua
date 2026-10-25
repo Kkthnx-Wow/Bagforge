@@ -67,15 +67,18 @@ local function GUIDEqual(a, b)
 	return a == b
 end
 
+-- Repointed per call: Scan() asks for every backpack slot on each flush.
+local guidLocation = ItemLocation and ItemLocation:CreateEmpty()
+
 local function GetSlotGUID(bag, slot)
-	if not (ItemLocation and C_Item and C_Item.GetItemGUID) then
+	if not (guidLocation and C_Item and C_Item.GetItemGUID) then
 		return nil
 	end
-	local location = ItemLocation:CreateFromBagAndSlot(bag, slot)
-	if not (location and C_Item.DoesItemExist and C_Item.DoesItemExist(location)) then
+	guidLocation:SetBagAndSlot(bag, slot)
+	if not (C_Item.DoesItemExist and C_Item.DoesItemExist(guidLocation)) then
 		return nil
 	end
-	return C_Item.GetItemGUID(location)
+	return C_Item.GetItemGUID(guidLocation)
 end
 
 local function ClearExpired(now)

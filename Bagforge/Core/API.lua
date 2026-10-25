@@ -345,7 +345,7 @@ local VALID_CORNERS = {
 	left = true,
 	right = true,
 	top = true,
-	bottom = true,	
+	bottom = true,
 	center = true,
 }
 
@@ -654,10 +654,9 @@ function API:GetSources()
 					junk[#junk + 1] = key
 				end
 			end
-			if #cats == 0 and #srt == 0 and #junk == 0 then
-				-- Overlay-only registrations (e.g. built-in Pawn arrows) belong on
-				-- Item Display, not the Plugins source toggle list.
-			else
+			-- Overlay-only registrations (e.g. built-in Pawn arrows) belong on Item
+			-- Display, not the Plugins source toggle list.
+			if #cats > 0 or #srt > 0 or #junk > 0 then
 				tsort(cats)
 				tsort(srt)
 				tsort(junk)

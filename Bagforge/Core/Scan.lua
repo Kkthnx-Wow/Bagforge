@@ -64,6 +64,7 @@ local C_Item = C_Item
 local ItemLocation = ItemLocation
 local GetContainerItemEquipmentSetInfo = C_Container.GetContainerItemEquipmentSetInfo
 local GetContainerItemID = C_Container.GetContainerItemID
+local GetContainerItemLink = C_Container.GetContainerItemLink
 local GetItemInventoryTypeByID = C_Item.GetItemInventoryTypeByID
 local IsItemDataCachedByID = C_Item and C_Item.IsItemDataCachedByID
 local RequestLoadItemDataByID = C_Item and C_Item.RequestLoadItemDataByID
@@ -887,12 +888,14 @@ local function PopulateEntryFromSlot(self, entry, bag, slot, ctx, info)
 	elseif ctx.fastMeta then
 		ctx.fastMisses = (ctx.fastMisses or 0) + 1
 	end
-	local categories = ns:GetModule("Categories")
-	entry.category = categories and categories:GetCategory(entry) or L["Other"]
-	entry.categoryOrder = categories and categories:GetOrder(entry.category) or 100
+	-- Index before classifying: saved-search barewords read the blob, and a pooled
+	-- entry would otherwise still carry the previous item's text.
 	if ns.Search and ns.Search.IndexEntry then
 		ns.Search.IndexEntry(entry)
 	end
+	local categories = ns:GetModule("Categories")
+	entry.category = categories and categories:GetCategory(entry) or L["Other"]
+	entry.categoryOrder = categories and categories:GetOrder(entry.category) or 100
 	return true
 end
 
@@ -1186,6 +1189,16 @@ local function SlotSnapshotChanged(bag, slot, old)
 	end
 	if old.itemID ~= itemID then
 		return true
+	end
+	-- Same itemID can still be a different instance (swapped copies with other
+	-- bonus IDs or upgrade levels), the link carries that.
+	if GetContainerItemLink(bag, slot) ~= old.hyperlink then
+		return true
+	end
+	-- Unique items always hold one, so only stackables need the count read.
+	local maxStack = old.maxStack
+	if maxStack and maxStack <= 1 then
+		return false
 	end
 	local info = C_Container.GetContainerItemInfo(bag, slot)
 	local rawCount = info and info.stackCount

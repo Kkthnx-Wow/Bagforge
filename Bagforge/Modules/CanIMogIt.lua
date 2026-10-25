@@ -77,6 +77,21 @@ local function UpdateOverlay(button, entry)
 	tex:Show()
 end
 
+local function HideAllOverlays()
+	local itemButton = ns:GetModule("ItemButton")
+	local pool = itemButton and itemButton.pool
+	if not pool then
+		return
+	end
+	for i = 1, #pool.objects do
+		local button = pool.objects[i].button
+		local tex = button and button.bfCanIMogIt
+		if tex then
+			tex:Hide()
+		end
+	end
+end
+
 local function InstallCallback()
 	if CanIMogItMod._callbackInstalled or not (ns.API and ns.API.RegisterItemButtonCallback) then
 		return
@@ -87,15 +102,22 @@ local function InstallCallback()
 end
 
 function CanIMogItMod:Apply()
+	local itemButton = ns:GetModule("ItemButton")
 	if AddonAvailable() and ns.db.canimogit.enable then
 		InstallCallback()
+		-- Buttons skip repaints when their entry is unchanged, force one so the
+		-- overlay appears on items already on screen.
+		if itemButton and itemButton.InvalidatePaint then
+			itemButton:InvalidatePaint()
+		end
 	else
 		if ns.API and ns.API.UnregisterItemButtonCallback then
 			ns.API:UnregisterItemButtonCallback("canimogit")
 			CanIMogItMod._callbackInstalled = false
 		end
-		ns:RefreshBags(false)
+		HideAllOverlays()
 	end
+	ns:RefreshBags(false)
 end
 
 function CanIMogItMod:OnEnable()
@@ -111,6 +133,7 @@ function CanIMogItMod:OnDisable()
 		ns.API:UnregisterItemButtonCallback("canimogit")
 		CanIMogItMod._callbackInstalled = false
 	end
+	HideAllOverlays()
 	ns:RefreshBags(false)
 end
 

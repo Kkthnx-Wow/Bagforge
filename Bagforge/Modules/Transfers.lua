@@ -356,8 +356,9 @@ end
 local function EnsureQueueEvents()
 	if not queueEventFrame then
 		queueEventFrame = CreateFrame("Frame")
-		queueEventFrame:SetScript("OnEvent", DrainDepositQueue)
 	end
+	-- OnDisable clears the handler, so set it every time the queue arms.
+	queueEventFrame:SetScript("OnEvent", DrainDepositQueue)
 	queueEventFrame:RegisterEvent("BAG_UPDATE")
 end
 

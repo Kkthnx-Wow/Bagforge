@@ -29,6 +29,7 @@ local IsAltKeyDown = IsAltKeyDown
 local IsControlKeyDown = IsControlKeyDown
 local C_Item = C_Item
 local ItemLocation = ItemLocation
+local qualityLocation = ItemLocation and ItemLocation:CreateEmpty()
 local SetItemButtonTexture = SetItemButtonTexture
 local SetItemButtonCount = SetItemButtonCount
 local SetItemButtonQuality = SetItemButtonQuality
@@ -281,10 +282,11 @@ local function Button_SetItem(self, entry)
 	-- while bonus-ID gear is Epic.
 	local quality = nil
 	local bag, slot = entry.bag, entry.slot
-	if bag and slot and ItemLocation and C_Item.GetItemQuality then
-		local loc = ItemLocation:CreateFromBagAndSlot(bag, slot)
-		if loc and C_Item.DoesItemExist and C_Item.DoesItemExist(loc) then
-			quality = C_Item.GetItemQuality(loc)
+	if bag and slot and qualityLocation and C_Item.GetItemQuality then
+		-- One shared location, repointed per call, instead of a table per paint.
+		qualityLocation:SetBagAndSlot(bag, slot)
+		if C_Item.DoesItemExist and C_Item.DoesItemExist(qualityLocation) then
+			quality = C_Item.GetItemQuality(qualityLocation)
 		end
 	end
 	if quality == nil then
@@ -433,6 +435,7 @@ local function Button_SetItem(self, entry)
 end
 
 local function Button_Clear(self)
+	local old = self.entry
 	UnregisterSlot(self)
 	self._paintSnap = nil
 	self:SetID(0)
@@ -499,6 +502,10 @@ local function Button_Clear(self)
 	end
 	if self.button.TLHOverlay then
 		self.button.TLHOverlay:Hide()
+	end
+	-- Documented contract: plugin callbacks also hear about cleared slots.
+	if ns.API and ns.API._FireItemButtonCallbacks then
+		ns.API:_FireItemButtonCallbacks(self.button, old and old.bag, old and old.slot, nil)
 	end
 end
 
@@ -888,6 +895,18 @@ local function ResetButton(parent)
 	parent:ClearItem()
 	parent:SetScale(1) -- drop any per-view icon-size scale before the next reuse
 	parent:SetParent(UIParent)
+end
+
+--- Forget every button's paint snapshot so the next draw repaints them fully.
+--- For overlay sources that change without the scanned entry changing.
+function ItemButton:InvalidatePaint()
+	local pool = self.pool
+	if not pool then
+		return
+	end
+	for i = 1, #pool.objects do
+		pool.objects[i]._paintSnap = nil
+	end
 end
 
 function ItemButton:ClearBagHighlight()

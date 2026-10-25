@@ -186,14 +186,22 @@ end
 --- (same delay spirit as Transfers STEP_DELAY).
 function CombineStacks.RunThen(bags, onComplete)
 	local delay = 0.15
+	local maxSteps = 200 -- about 30s, a stack that never unlocks must not stall the sort
+	local steps = 0
 	local After = C_Timer.After
 	local function Step()
+		steps = steps + 1
 		local status = CombineStacks.Run(bags)
-		if status == STATUS.Complete then
+		if status == STATUS.Complete or steps >= maxSteps then
 			if onComplete then
 				onComplete()
 			end
 			return
+		end
+		-- Keep the sort gate closed while the combine is still moving items, its
+		-- own flush timer is shorter than a long combine.
+		if ns.IsBagSortActive and ns:IsBagSortActive() then
+			ns:ScheduleBagSortFlush()
 		end
 		After(delay, Step)
 	end

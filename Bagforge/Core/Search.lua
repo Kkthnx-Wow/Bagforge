@@ -446,27 +446,47 @@ function Search.InvalidateTooltips()
 	wipe(tooltipCache)
 end
 
---- Pre-build a lowercase search blob on each entry at scan time (name, category,
---- type, bind, ilvl) so bareword saved-search tokens avoid re-querying fields.
+local indexParts = {}
+
+--- Pre-build a lowercase search blob on each entry at scan time (name, type,
+--- subtype, bind, equip slot, ilvl) so bareword saved-search tokens avoid
+--- re-querying fields. The category is left out on purpose: classification reads
+--- this blob to decide the category.
 function Search.IndexEntry(entry)
 	if not entry then
 		return
 	end
-	local parts = {}
-	local function add(s)
-		if s then
-			parts[#parts + 1] = slower(s)
-		end
+	local parts = indexParts
+	local n = 0
+	local value = entry.name
+	if value then
+		n = n + 1
+		parts[n] = slower(value)
 	end
-	add(entry.name)
-	add(entry.category)
-	add(entry.itemType)
-	add(entry.itemSubType)
-	add(entry.bindLabel)
-	add(entry.itemEquipLoc)
-	local ilvl = entry.ilvl
-	if ilvl then
-		parts[#parts + 1] = tostring(ilvl)
+	value = entry.itemType
+	if value then
+		n = n + 1
+		parts[n] = slower(value)
 	end
-	entry.searchIndex = #parts > 0 and tconcat(parts, "\0") or nil
+	value = entry.itemSubType
+	if value then
+		n = n + 1
+		parts[n] = slower(value)
+	end
+	value = entry.bindLabel
+	if value then
+		n = n + 1
+		parts[n] = slower(value)
+	end
+	value = entry.itemEquipLoc
+	if value then
+		n = n + 1
+		parts[n] = slower(value)
+	end
+	value = entry.ilvl
+	if value then
+		n = n + 1
+		parts[n] = tostring(value)
+	end
+	entry.searchIndex = n > 0 and tconcat(parts, "\0", 1, n) or nil
 end

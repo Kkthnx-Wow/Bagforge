@@ -302,9 +302,6 @@ function ns:IsSortFlush()
 	return self._wasSortFlush == true
 end
 
---- Register a post-sort flush (e.g. backpack + bank). Multiple callers share
---- one trailing timer so neither overwrites the other.
-
 --- Route a settings or overlay change to the narrowest safe refresh path.
 --- opts: { paint?, headers?, layout?, reclassify?, chrome?, zone? }
 function ns:UIRefresh(opts)
@@ -394,10 +391,19 @@ function ns:ScheduleBagSortFlush(part, callback)
 		local wasSortFlush = self._pendingSortFlush
 		self._pendingSortFlush = false
 		self._wasSortFlush = wasSortFlush
+		-- Copy and clear first: a part may re-arm the gate, and one faulty part must
+		-- not leave the sort flag stuck or skip the Sort.StateChanged reset below.
+		local parts = {}
 		for _, fn in pairs(sortFlushParts) do
-			fn()
+			parts[#parts + 1] = fn
 		end
 		wipe(sortFlushParts)
+		for i = 1, #parts do
+			local ok, err = pcall(parts[i])
+			if not ok then
+				geterrorhandler()(err)
+			end
+		end
 		self._wasSortFlush = nil
 		self:TriggerCallback("Sort.StateChanged", false)
 	end)

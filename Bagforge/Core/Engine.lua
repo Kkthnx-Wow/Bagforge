@@ -7,7 +7,7 @@
 
 	Design goals (lifted wholesale from NexEnhance, which got them right):
 	  * One global only (`_G.Bagforge`) - everything else lives on `ns`.
-	  * One event frame for the whole addon; modules subscribe through it
+	  * One event frame for the whole addon, modules subscribe through it
 	    instead of each spawning their own frame and double-registering.
 	  * Clear lifecycle: OnInitialize (DB ready) -> OnEnable (world ready).
 --]]
@@ -154,7 +154,7 @@ function ns:RegisterEvent(event, callback)
 		eventFrame:RegisterEvent(event)
 	end
 	-- Refill a tombstoned slot if one exists so add/remove cycles don't grow
-	-- the array; this never shifts indices, so it's safe mid-dispatch.
+	-- the array, this never shifts indices, so it's safe mid-dispatch.
 	for i = 1, #callbacks do
 		if not callbacks[i] then
 			callbacks[i] = callback
@@ -276,8 +276,8 @@ local function Enable()
 end
 
 -- ---------------------------------------------------------------------------
--- Bag sort gate (BetterBags / EUI pattern)
---   Blizzard sort moves many slots; suppress full rescans until the burst of
+-- Bag sort gate
+--   Blizzard sort moves many slots, suppress full rescans until the burst of
 --   BAG_UPDATE_DELAYED events settles, then flush one coordinated refresh.
 -- ---------------------------------------------------------------------------
 local sortFlushTimer

@@ -79,7 +79,7 @@ end
 
 function Bank:OnInitialize()
 	-- Views are built in OnEnable, but Items/Bank hooks can run earlier (e.g.
-	-- QUEST_LOG_UPDATE during load); an empty table keeps #views safe.
+	-- QUEST_LOG_UPDATE during load), an empty table keeps #views safe.
 	self.views = {}
 end
 
@@ -200,7 +200,7 @@ function Bank:RefreshItemID(itemID, accumulate)
 	return needRescan, junkChanged, needLayout
 end
 
---- refreshFn(scanner[, onComplete]) → changed, needsFinalize[, pending].
+--- refreshFn(scanner[, onComplete]) -> changed, needsFinalize[, pending].
 --- When any view is budget-pending, returns pending=true and calls onAllDone
 --- once every view has finished (sync or async).
 function Bank:ApplyViewScannerRefresh(refreshFn, onAllDone)
@@ -462,7 +462,7 @@ end
 
 function Bank:OpenBanking()
 	local view = self:PickView()
-	-- CanViewBank can lag BANKFRAME_OPENED by a frame on fresh login; retry
+	-- CanViewBank can lag BANKFRAME_OPENED by a frame on fresh login, retry
 	-- once so we don't suppress Blizzard's frame and show nothing.
 	if not view then
 		C_Timer.After(0, function()
@@ -521,7 +521,7 @@ function Bank:SetColumns(columns, warband)
 end
 
 function Bank:ResetPosition(scope)
-	-- scope: nil = all views; true/"warband" = warband only; "active" or other
+	-- scope: nil = all views, true/"warband" = warband only, "active" or other
 	-- enabledKey = that view only.
 	local warbandOnly = scope == true or scope == "warband"
 	local onlyKey = (type(scope) == "string" and scope ~= "warband") and scope or nil
@@ -587,13 +587,13 @@ function Bank:OnSettingChanged(key)
 	end
 
 	if key == "columns" or key == "warbandColumns" or key == "categoriesPerColumn" or key == "iconSize" or key == "warbandIconSize" then
-		-- Column/icon-size changes must rebuild panel geometry; per-column masonry
-		-- only needs a layout pass (do not bump DrawEpoch or rescan — that broke the UI).
+		-- Column/icon-size changes must rebuild panel geometry, per-column masonry
+		-- only needs a layout pass (do not bump DrawEpoch or rescan - that broke the UI).
 		if key == "columns" or key == "warbandColumns" or key == "iconSize" or key == "warbandIconSize" then
 			open:InvalidateLayout()
 		end
 		open:Relayout()
-		-- categoriesPerColumn is shared; relayout any other open bank view too.
+		-- categoriesPerColumn is shared, relayout any other open bank view too.
 		if key == "categoriesPerColumn" and self.views then
 			for i = 1, #self.views do
 				local view = self.views[i]
@@ -624,7 +624,7 @@ function Bank:RegisterOptions(category, builder)
 	builder:DependsOn(reagents, characterToggle)
 	-- No "Bank Tabs" checkbox: the bank window's own tab button toggles it
 	-- (ToggleTabBar), so a settings duplicate was redundant. showTabBar still
-	-- persists; the in-bank button drives it.
+	-- persists, the in-bank button drives it.
 end
 
 function Bank:IsRuntimeActive()
@@ -712,7 +712,7 @@ function Bank:InstallHooks()
 		FlushBankRefresh(dirtyBankBags)
 	end)
 
-	-- Mark dirty only; flush on BAG_UPDATE_DELAYED (same as backpack Items.lua).
+	-- Mark dirty only, flush on BAG_UPDATE_DELAYED (same as backpack Items.lua).
 	-- Eager queueRefresh here raced slot data and double-fired with DELAYED.
 	track(
 		"BAG_UPDATE",
@@ -738,7 +738,7 @@ function Bank:InstallHooks()
 	track(
 		"BANK_TABS_CHANGED",
 		self:RegisterEvent("BANK_TABS_CHANGED", function(_, bankType)
-			-- Structural: tab count / bag list changed — flush now, don't wait for DELAYED.
+			-- Structural: tab count / bag list changed - flush now, don't wait for DELAYED.
 			MarkAllBankBagsDirty(dirtyBankBags)
 			queueRefresh()
 			Bank:RefreshTabBars(bankType)
@@ -747,7 +747,7 @@ function Bank:InstallHooks()
 	track(
 		"PLAYERBANKSLOTS_CHANGED",
 		self:RegisterEvent("PLAYERBANKSLOTS_CHANGED", function()
-			-- Slot churn: mark dirty only; BAG_UPDATE_DELAYED owns the flush
+			-- Slot churn: mark dirty only, BAG_UPDATE_DELAYED owns the flush
 			-- (same as backpack). Eager queueRefresh double-scanned with DELAYED.
 			MarkAllBankBagsDirty(dirtyBankBags)
 		end)
@@ -782,7 +782,7 @@ function Bank:InstallHooks()
 		end
 	end, Bank)
 
-	-- Events.lua: INVENTORY_SEARCH_UPDATE — keep bank scanner filters warm when closed.
+	-- Events.lua: INVENTORY_SEARCH_UPDATE - keep bank scanner filters warm when closed.
 	local queueSearch = F.DebounceNoArgs(0.05, function()
 		local open = Bank:OpenView()
 		if open and open.RefreshFiltered then

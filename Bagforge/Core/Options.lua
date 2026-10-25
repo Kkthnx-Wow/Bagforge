@@ -38,7 +38,7 @@ end
 
 -- ---------------------------------------------------------------------------
 -- Builder
---   `module` must carry a `dbKey`; the setting is bound to ns.db[dbKey][key]
+--   `module` must carry a `dbKey`, the setting is bound to ns.db[dbKey][key]
 --   with the registered default pulled from ns.defaults.profile[dbKey][key].
 -- ---------------------------------------------------------------------------
 local OptionBuilder = {}
@@ -120,7 +120,7 @@ function OptionBuilder:Button(label, buttonText, onClick, tooltip)
 	local create = _G["CreateSettingsButtonInitializer"]
 	if layout and create then
 		-- Midnight's Settings helper asserts that addSearchTags is explicitly
-		-- provided; omitting it aborts the module's RegisterOptions after the
+		-- provided, omitting it aborts the module's RegisterOptions after the
 		-- section header, which leaves a blank "Category Manager" block.
 		layout:AddInitializer(create(label, buttonText, onClick, tooltip, true))
 	end
@@ -141,7 +141,7 @@ end
 -- ---------------------------------------------------------------------------
 -- Sidebar groups (sub-trees)
 --   Each module declares a `group` key. The "general" group renders on the
---   parent "Bagforge" page; every other group becomes its own vertical-layout
+--   parent "Bagforge" page, every other group becomes its own vertical-layout
 --   subcategory in the Settings sidebar (NexEnhance-style). New groups just need
 --   an entry here and a matching module.group.
 -- ---------------------------------------------------------------------------
@@ -159,7 +159,7 @@ for i = 1, #GROUPS do
 end
 
 -- Sidebar label with an inline icon (texture path -> |T escape). Sorting uses
--- the clean title; the icon is decoration only.
+-- the clean title, the icon is decoration only.
 local function GroupLabel(group)
 	if group.icon then
 		return format("|T%s:16:16:0:0|t %s", group.icon, group.title)

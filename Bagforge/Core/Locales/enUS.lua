@@ -319,9 +319,9 @@ L["Open your bags at a scrapping machine."] = "Open your bags at a scrapping mac
 L["Specialty Bag Colors"] = "Specialty Bag Colors"
 L["Tint equipped specialty bag slots on the bag bar."] = "Tint equipped specialty bag slots on the bag bar."
 
--- Pet-trash junk exemption (NDui PetTrash).
+-- Pet-trash junk exemption.
 L["Pet Trash Currencies"] = "Pet Trash Currencies"
-L["Keep grey pet-battle vendor items out of Junk and auto-sell; group them under Collections instead."] = "Keep grey pet-battle vendor items out of Junk and auto-sell; group them under Collections instead."
+L["Keep grey pet-battle vendor items out of Junk and auto-sell, group them under Collections instead."] = "Keep grey pet-battle vendor items out of Junk and auto-sell, group them under Collections instead."
 
 -- CanIMogIt integration.
 L["CanIMogIt"] = "CanIMogIt"
@@ -431,6 +431,8 @@ L["Color"] = "Color"
 L["Change Color..."] = "Change Color..."
 L["Reset Color"] = "Reset Color"
 
+L["Grey Out Junk"] = "Grey Out Junk"
+L["Desaturate the icons of junk items (poor-quality and anything on your custom-junk list)."] = "Desaturate the icons of junk items (poor-quality and anything on your custom-junk list)."
 L["Show Junk Total Price"] = "Show Junk Total Price"
 L["Display the total gold value of all items inside the Junk category header."] = "Display the total gold value of all items inside the Junk category header."
 

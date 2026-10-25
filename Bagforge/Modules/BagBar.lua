@@ -42,7 +42,7 @@ local BagIndex = Enum.BagIndex
 local BAG_SLOT_SIZE = 37
 local BAG_SLOT_GAP = 6
 
--- NDui bagTypeColor: tint equipped specialty bag slots on the bar.
+-- bagTypeColor: tint equipped specialty bag slots on the bar.
 local SPECIAL_BAG_COLORS = {
 	[2] = { 0, 0.5, 0, 0.35 }, -- herb
 	[3] = { 0.8, 0, 0.8, 0.35 }, -- enchanting
@@ -321,6 +321,13 @@ function BagBar:CreateBagSlotButton(parent, bagID)
 	button:SetScript("OnDragStart", BagSlot_OnDragStart)
 	button:SetScript("OnEnter", BagSlot_OnEnter)
 	button:SetScript("OnLeave", BagSlot_OnLeave)
+
+	-- Skin via its own "Bag Bar" Masque group so it can be styled independently
+	-- of the item grid.
+	local itemButton = ns:GetModule("ItemButton")
+	if itemButton and itemButton.MasqueSkin then
+		itemButton:MasqueSkin(button, "Bag Bar")
+	end
 
 	return button
 end

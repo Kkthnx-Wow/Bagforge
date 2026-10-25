@@ -1,7 +1,7 @@
 --[[
 	Bagforge - ItemLoader (static per-slot Item mixin cache)
 	-------------------------------------------------------------------------
-	BetterBags pattern: one permanent Item mixin per physical bag slot. The
+	pattern: one permanent Item mixin per physical bag slot. The
 	mixin is bound to bag+slot, not item identity, so it stays valid when
 	Blizzard sort moves items. Avoids CreateFromBagAndSlot GC churn on every
 	scan and gives ContinuableContainer a stable continuable per slot.

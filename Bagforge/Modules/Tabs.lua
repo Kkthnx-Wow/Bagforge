@@ -6,11 +6,11 @@
 	The bank window uses it to switch between the character bank and the warband
 	bank without a separate toggle button.
 
-	This is our own minimal re-code of the idea BetterBags ships in frames/tabs.lua:
-	we keep its PanelTabButtonTemplate styling (toggling the *Active textures for
+	This is our own minimal take on tucked-under tabs:
+	we keep the PanelTabButtonTemplate styling (toggling the *Active textures for
 	the selected tab, nudging the label down a few px) but drop everything we
 	don't need yet - themes, drag-to-reorder, icon tabs and secure purchase tabs.
-	A Tab strip is a plain Lua object wrapping a container frame; tabs are keyed
+	A Tab strip is a plain Lua object wrapping a container frame, tabs are keyed
 	by an opaque id the caller chooses (we use the bank view's enabledKey).
 --]]
 
@@ -78,7 +78,7 @@ function proto:SetClickHandler(fn)
 	self.onClick = fn
 end
 
---- Add a tab. `id` is any value the caller uses to identify it; `text` is the
+--- Add a tab. `id` is any value the caller uses to identify it, `text` is the
 --- visible label.
 function proto:AddTab(id, text)
 	local tab = CreateFrame("Button", nil, self.frame, "PanelTabButtonTemplate")

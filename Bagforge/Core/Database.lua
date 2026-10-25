@@ -53,7 +53,7 @@ end
 function ns:SetupDatabase()
 	C.RefreshPlayer()
 
-	-- Saved variables are nil on a brand-new install; create the skeleton.
+	-- Saved variables are nil on a brand-new install, create the skeleton.
 	local root = _G.BagforgeDB or {}
 	_G.BagforgeDB = root
 	root.profiles = root.profiles or {}

@@ -105,10 +105,14 @@ local exactCommands = {
 			backpack:Toggle()
 		end
 	end,
-	[""] = function()
-		exactCommands.toggle()
-	end,
 }
+
+-- Bare "/bf" toggles the bags. Assigned after the table so the closure captures
+-- the exactCommands local, not a nil global (a self-reference inside the table
+-- literal above would resolve to the global).
+exactCommands[""] = function()
+	exactCommands.toggle()
+end
 
 -- Alternate spellings for the same command (kept in one place).
 local commandAliases = {
@@ -235,7 +239,7 @@ end
 
 local function HandleSlash(msg)
 	-- Trim but DON'T lowercase: custom-category names and pasted item links are
-	-- case-sensitive. Only the command word is normalised; the value passes
+	-- case-sensitive. Only the command word is normalised, the value passes
 	-- through verbatim (handlers that want lowercase, like filter, do it).
 	msg = (msg or ""):gsub("^%s+", ""):gsub("%s+$", "")
 	local command, value = msg:match("^(%S+)%s*(.*)$")

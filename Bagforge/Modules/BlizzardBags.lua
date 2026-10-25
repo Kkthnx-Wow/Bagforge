@@ -5,8 +5,8 @@
 	stock open/toggle entry points to drive Bagforge instead. Mixed onto Backpack.
 
 	Important: hooksecurefunc on ToggleBag runs *after* Blizzard has already
-	shown ContainerFrame6 (reagent bag). cargBags/NDui replace the globals;
-	Baganator/BetterBags reparent frames and hook bag-bar buttons. We replace
+	shown ContainerFrame6 (reagent bag). Other bag addons replace the globals,
+	reparent frames, and hook bag-bar buttons. We replace
 	the globals and hide/reparent frames on every open path.
 --]]
 
@@ -32,7 +32,7 @@ local BAG_BINDINGS = {
 	"TOGGLEREAGENTBAG",
 }
 
--- Retail: ContainerFrame1–5 = backpack + bags, ContainerFrame6 = reagent bag.
+-- Retail: ContainerFrame1-5 = backpack + bags, ContainerFrame6 = reagent bag.
 local HELD_CONTAINER_FRAMES = 6
 
 local BlizzardBags = {}
@@ -67,7 +67,7 @@ function BlizzardBags.Apply(target)
 	target.SetupKeybinds = BlizzardBags.SetupKeybinds
 end
 
--- Saved before SuppressBlizzardBags replaces them; restored on module disable.
+-- Saved before SuppressBlizzardBags replaces them, restored on module disable.
 local savedGlobals = nil
 local closeHooksInstalled = false
 
@@ -138,7 +138,7 @@ function BlizzardBags:SuppressBlizzardBags()
 		backpack:Open()
 	end
 	local closeOurs = function()
-		-- hooksecurefunc cannot uninstall — gate when restored.
+		-- hooksecurefunc cannot uninstall - gate when restored.
 		if not backpack.defaultBagsSuppressed then
 			return
 		end

@@ -59,7 +59,7 @@ C.Colors = {
 	brand = { 0.99, 0.61, 0.13 }, -- #FD9B20 forge amber
 }
 
--- Narrow UI refresh contracts (Baganator RefreshReason / RefreshZone pattern).
+-- Narrow UI refresh contracts.
 C.RefreshReason = {
 	paint = "paint",
 	headers = "headers",
@@ -77,7 +77,7 @@ C.RefreshZone = {
 -- ---------------------------------------------------------------------------
 -- Bag indices
 --   Enum.BagIndex gives us stable, patch-proof bag ids. The backpack set is
---   everything the player carries on their person; the reagent bag rides along
+--   everything the player carries on their person, the reagent bag rides along
 --   with it. We keep both a hash (for O(1) "is this a backpack bag?" tests) and
 --   an ordered list (for deterministic scan order).
 -- ---------------------------------------------------------------------------
@@ -91,7 +91,7 @@ C.BACKPACK_BAGS = {
 	Enum.BagIndex.Bag_4,
 }
 
--- The reagent bag only exists on retail; guard so Classic flavours don't choke.
+-- The reagent bag only exists on retail, guard so Classic flavours don't choke.
 if BagIndex.ReagentBag then
 	C.BACKPACK_BAGS[#C.BACKPACK_BAGS + 1] = BagIndex.ReagentBag
 end
@@ -103,7 +103,7 @@ for _, bag in ipairs(C.BACKPACK_BAGS) do
 end
 
 -- Character bank tabs are also bag IDs in Midnight. `C_Bank` reports the
--- purchased/viewable subset at runtime; this table is the full stable range.
+-- purchased/viewable subset at runtime, this table is the full stable range.
 C.CHARACTER_BANK_BAGS = {}
 for i = 1, 6 do
 	local bag = BagIndex["CharacterBankTab_" .. i]
@@ -151,10 +151,10 @@ end
 -- ---------------------------------------------------------------------------
 -- Layout
 --   Pixel numbers and default column/category counts. User-facing widths are
---   configurable in options; these are defaults and code fallbacks.
+--   configurable in options, these are defaults and code fallbacks.
 -- ---------------------------------------------------------------------------
 C.Layout = {
-	ITEM_SIZE = 37, -- width/height of one item button (default; per-view override in DB)
+	ITEM_SIZE = 37, -- width/height of one item button (default, per-view override in DB)
 	ITEM_PADDING = 4, -- gap between item buttons
 	MIN_ICON_SIZE = 24, -- lower bound for the per-view icon-size slider
 	MAX_ICON_SIZE = 64, -- upper bound for the per-view icon-size slider
@@ -164,10 +164,10 @@ C.Layout = {
 	MIN_COLUMNS = 6,
 	MAX_COLUMNS = 40,
 
-	-- Per-category panel (the cargBags-style "container"). Each category is its
-	-- own SettingsFrameTemplate frame; these numbers govern that panel.
+	-- Per-category panel (the "container"). Each category is its
+	-- own SettingsFrameTemplate frame, these numbers govern that panel.
 	PANEL_PADDING = 10, -- vertical inset (top/bottom) from panel edge to its grid
-	PANEL_PADDING_X = 11, -- horizontal inset; just clears the NineSlice side border (tighter = columns/margins sit closer)
+	PANEL_PADDING_X = 11, -- horizontal inset, just clears the NineSlice side border (tighter = columns/margins sit closer)
 	-- The SettingsFrameTemplate NineSlice border is thicker on the left, so an
 	-- evenly-anchored grid looks shoved left. This shifts the whole grid (and the
 	-- left-aligned chrome) right by a few px without changing the panel width, so
@@ -178,7 +178,7 @@ C.Layout = {
 
 	-- The main "Bag" panel doubles as the window: title strip (PANEL_HEADER_HEIGHT),
 	-- then search/sort row, then the item grid. GetChromeInsets() places the search
-	-- row; MAIN_CHROME_TOP is the inset below the title before items start.
+	-- row, MAIN_CHROME_TOP is the inset below the title before items start.
 	MAIN_CHROME_TITLE_GAP = 0, -- search row sits directly under the title strip
 	MAIN_CHROME_ROW_LIFT = 4, -- pull the chrome band up toward the title
 	MAIN_CHROME_ROW_HEIGHT = 24, -- search box height (border art stretched in ContainerWindow)
@@ -195,7 +195,7 @@ C.Layout = {
 	CURRENCY_BAR_OFFSET_Y = 10, -- alias of CURRENCY_FOOTER_OFFSET_Y
 	MONEY_OFFSET_Y = 10,
 
-	-- Bank footer: gold bottom-right (warband = account gold; character = wallet gold).
+	-- Bank footer: gold bottom-right (warband = account gold, character = wallet gold).
 	WARBAND_FOOTER_OFFSET_Y = 8,
 	WARBAND_MONEY_ROW_HEIGHT = 24,
 	WARBAND_FOOTER_HEIGHT = 32,
@@ -213,7 +213,7 @@ C.Layout = {
 	ITEM_BUTTON_POOL_PREWARM = 400,
 	ITEM_BUTTON_POOL_MAX = 900,
 
-	-- Blizzard BankFrame UIPanel slot (area=left; UIParent LEFT_OFFSET=16, TOP_OFFSET=-116).
+	-- Blizzard BankFrame UIPanel slot (area=left, UIParent LEFT_OFFSET=16, TOP_OFFSET=-116).
 	BANK_DEFAULT_POINT = "LEFT",
 	BANK_DEFAULT_REL_POINT = "LEFT",
 	BANK_DEFAULT_X = 16,
@@ -221,7 +221,7 @@ C.Layout = {
 }
 
 --- Estimate how many secure item buttons to pre-warm from the player's actual
---- bag slot counts (Baganator/BetterBags: avoid pool exhaustion when bank opens).
+--- bag slot counts.
 function C.EstimateItemButtonPoolSize()
 	local C_Container = C_Container
 	if not C_Container or not C_Container.GetContainerNumSlots then

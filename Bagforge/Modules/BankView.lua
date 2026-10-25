@@ -2,7 +2,7 @@
 	Bagforge - BankView (per-bank-kind categorized window)
 	-------------------------------------------------------------------------
 	One view instance per bank kind (character / warband). Built on ContainerWindow
-	for shared draw/category plumbing; tab flyout and bank-specific chrome live here.
+	for shared draw/category plumbing, tab flyout and bank-specific chrome live here.
 --]]
 
 local _, ns = ...
@@ -306,7 +306,7 @@ function View:BuildBankFooter()
 		DisableMoneyPickup(money)
 		EnsureMoneyTransferHighlight(money)
 
-		-- One proxy handles both buttons; overlapping layers swallowed clicks.
+		-- One proxy handles both buttons, overlapping layers swallowed clicks.
 		local moneyClick = CreateFrame("Button", nil, money, "InsecureActionButtonTemplate")
 		moneyClick:SetAllPoints(money)
 		moneyClick:SetFrameLevel(F.ClampFrameLevel(money:GetFrameLevel() + 10))
@@ -475,7 +475,7 @@ function View:SetDepositTargetBag(bagID)
 		return
 	end
 	self.depositTargetBag = bagID
-	-- BetterBags view.sortRequired: tab switch can race a fresh draw context;
+	-- view.sortRequired: tab switch can race a fresh draw context.
 	-- force a full panel Layout so masonry doesn't keep stale signatures.
 	self._sortRequired = true
 	self:UpdateTabBarSelection()
@@ -528,8 +528,8 @@ function View:GetBankBags()
 end
 
 -- Run() calls this when the build is ready (immediately, and again once any late
--- item data has loaded). Debounce layout like backpack Items.Updated (BetterBags
--- refresh coalescing) so ContinuableContainer's second pass doesn't double-layout.
+-- item data has loaded). Debounce layout like backpack Items.Updated (refresh
+-- coalescing) so ContinuableContainer's second pass doesn't double-layout.
 function View:GetScanCallback()
 	if not self._onScan then
 		self._queueDrawLayout = F.DebounceNoArgs(0.05, function()
@@ -547,7 +547,7 @@ function View:GetScanCallback()
 			-- First open: main panel is still unsized (0x0). Debouncing layout
 			-- alone meant BANKFRAME_OPENED played the sound while Bagforge
 			-- stayed invisible until close/reopen. Paint immediately when we
-			-- have never laid out; coalesce later ContinuableContainer passes.
+			-- have never laid out, coalesce later ContinuableContainer passes.
 			local main = self.mainContainer
 			if main and not main._lastW then
 				self:DrawLayout()
@@ -717,8 +717,8 @@ function View:GetBankTabData(tabID)
 end
 
 --- Blizzard's tab icon/name/filter editor (BankPanelTabSettingsMenuTemplate).
---- Baganator/Sorted/BetterBags each host their own menu; BankFrame has no
---- BankTabSettingsMenu child — it lives on BankPanel.TabSettingsMenu.
+--- Other bag addons each host their own menu, BankFrame has no
+--- BankTabSettingsMenu child - it lives on BankPanel.TabSettingsMenu.
 function View:EnsureTabSettingsMenu()
 	if self.tabSettingsMenu then
 		return self.tabSettingsMenu
@@ -1031,8 +1031,8 @@ function View:DrawLayout()
 	end
 	self._pendingChangeset = nil
 
-	-- Tab switch: BetterBags sortRequired — don't patch from a stale incremental
-	-- changeset; full Layout so free-slot footer / masonry match the new tab.
+	-- Tab switch: sortRequired - don't patch from a stale incremental
+	-- changeset, full Layout so free-slot footer / masonry match the new tab.
 	if self._sortRequired then
 		self._sortRequired = false
 		changeset = nil
@@ -1101,7 +1101,7 @@ function View:Open()
 	self:UpdateChrome()
 	self:ApplyTabBarState()
 	self:UpdateBankFooter()
-	-- Run() builds synchronously; paint now so we don't wait on the 50ms
+	-- Run() builds synchronously, paint now so we don't wait on the 50ms
 	-- _ScheduleScanComplete debounce (backpack Open already Draw()s sync).
 	self:Draw()
 	local scanner = self.scanner
@@ -1172,8 +1172,8 @@ function View:InvalidateLayout()
 end
 
 --- Live settings refresh: relayout from the last scan without rescanning bags.
---- `opts.refreshTabs` — also refresh Bank/Warband switcher + purchased tab bar
---- (skip for masonry-only sliders; UpdateTabs was hiding the strip mid-drag).
+--- `opts.refreshTabs` - also refresh Bank/Warband switcher + purchased tab bar
+--- (skip for masonry-only sliders, UpdateTabs was hiding the strip mid-drag).
 function View:Relayout(opts)
 	opts = opts or {}
 	if not self.open or not self.frame then

@@ -15,7 +15,7 @@
 	categories (quest items are protected by default).
 
 	The toolbar button itself is created in Backpack:BuildChrome alongside the
-	other chrome icons; this module owns the scan, the confirm dialog and the
+	other chrome icons, this module owns the scan, the confirm dialog and the
 	options page, and Backpack calls back into Report()/Prompt() on click.
 
 	Vendor sell price and container item fields are plain values in the 12.0.7 API docs.
@@ -203,7 +203,7 @@ function DeleteCheapest:OnSettingChanged(key)
 	if key ~= "enable" then
 		return
 	end
-	-- The toolbar button lives on the backpack chrome; let it show/hide and
+	-- The toolbar button lives on the backpack chrome, let it show/hide and
 	-- reclaim the search-box width without a reload.
 	local backpack = ns:GetModule("Backpack")
 	if backpack and backpack.UpdateDeleteCheapestButton then

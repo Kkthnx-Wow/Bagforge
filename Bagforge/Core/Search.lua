@@ -15,7 +15,7 @@
 	  * whitespace      = AND
 	  * |               = OR (top-level groups)
 	  * !token          = NOT
-	  * key<op>value    = field test; op is one of  : = > >= < <=
+	  * key<op>value    = field test, op is one of  : = > >= < <=
 	  * tt:text         = tooltip line substring (60s cache per slot)
 	  * bareword        = a known flag (boe/new/quest/junk/gear/...) else a
 	                      substring match on the item name
@@ -25,7 +25,7 @@
 	scanned entry fields and never touches frames. ns.Search.Match(query, entry)
 	is the only thing classifiers call.
 
-	Modelled on BetterBags' search categories (search/query.lua), trimmed to the
+	Modelled on search categories (search/query.lua), trimmed to the
 	handful of fields a bag actually exposes instead of a full expression tree.
 --]]
 
@@ -410,7 +410,7 @@ local function Compile(query)
 end
 
 -- ---------------------------------------------------------------------------
--- Public API (compiled-predicate cache; cleared when a saved search changes)
+-- Public API (compiled-predicate cache, cleared when a saved search changes)
 -- ---------------------------------------------------------------------------
 -- Cache value `false` means "compiled to a never-match predicate" (distinct
 -- from nil = "not compiled yet"), so an empty/garbage query is only parsed once.

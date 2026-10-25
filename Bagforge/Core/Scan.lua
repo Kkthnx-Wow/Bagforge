@@ -15,40 +15,40 @@
 	------------------------------------
 	Loot and most settings changes never call Run() on the whole bag list:
 
-	  BAG_UPDATE → dirty bags → CollectDirtySlotKeys → Run(..., dirtySlotKeys)
-	    → _BuildSlotDiff → changeset on scanner.lastChangeset
+	  BAG_UPDATE -> dirty bags -> CollectDirtySlotKeys -> Run(..., dirtySlotKeys)
+	    -> _BuildSlotDiff -> changeset on scanner.lastChangeset
 
 	With stack merge off, add/remove patch section lists in place (no
-	_FinalizeBuild); UI relayouts only dirtyCategories.
+	_FinalizeBuild), UI relayouts only dirtyCategories.
 
-	Settings / overlays use targeted meta: methods below; wire through
+	Settings / overlays use targeted meta: methods below, wire through
 	ns:ApplyScannerRefresh in Items.lua (backpack + bank, finalize fallback).
 
 	Changeset fields (scanner.lastChangeset)
-	  added, removed, updated     — entry refs that moved
-	  dirtyCategories             — section names needing layout or patch
-	  incremental                 — true when UI can PatchEntry in place
-	  structureChanged            — category membership moved between panels
-	  needsFinalize               — section patch failed; caller must full Run()
+	  added, removed, updated     - entry refs that moved
+	  dirtyCategories             - section names needing layout or patch
+	  incremental                 - true when UI can PatchEntry in place
+	  structureChanged            - category membership moved between panels
+	  needsFinalize               - section patch failed, caller must full Run()
 
 	Draw (ContainerWindow.DrawCategorized): incremental + not structureChanged
-	→ PatchChangedEntries; else structural Layout on dirtyCategories.
+	-> PatchChangedEntries, else structural Layout on dirtyCategories.
 
 	In-place refresh APIs (return changed, needsFinalize unless noted)
-	RefreshCategories      — filter/plugin/custom/search toggle (frame-budgeted)
-	  RefreshSortOrder       — within-category sort mode
-	  RefreshStackMerge      — enable merge only (disable → needsFinalize)
-	  RefreshCategoryOrders  — order pin / manager reorder
-	  RefreshItemCategory    — one itemID assignment or junk flag
-	  RenameCategorySection  — custom category rename
-	  RefreshRecentFlags     — bulk recent/new-item reclassify
-	  RefreshRecentSlot      — one slot after Recent:Clear or new-item signal
-	  RefreshFiltered        — Blizzard search desaturate flag (returns changed)
-	  RefreshItemID          — GET_ITEM_INFO (returns changed, junk, finalize)
-	  RefreshDisplayFields   — Pawn/ItemInfo overlay paint
-	  RefreshUnusable        — unusable tint paint
-	  RefreshQuestState      — quest overlay + quest-driven category
-	  RefreshLock            — single-slot lock overlay (PatchSlot)
+	RefreshCategories      - filter/plugin/custom/search toggle (frame-budgeted)
+	  RefreshSortOrder       - within-category sort mode
+	  RefreshStackMerge      - enable merge only (disable -> needsFinalize)
+	  RefreshCategoryOrders  - order pin / manager reorder
+	  RefreshItemCategory    - one itemID assignment or junk flag
+	  RenameCategorySection  - custom category rename
+	  RefreshRecentFlags     - bulk recent/new-item reclassify
+	  RefreshRecentSlot      - one slot after Recent:Clear or new-item signal
+	  RefreshFiltered        - Blizzard search desaturate flag (returns changed)
+	  RefreshItemID          - GET_ITEM_INFO (returns changed, junk, finalize)
+	  RefreshDisplayFields   - Pawn/ItemInfo overlay paint
+	  RefreshUnusable        - unusable tint paint
+	  RefreshQuestState      - quest overlay + quest-driven category
+	  RefreshLock            - single-slot lock overlay (PatchSlot)
 
 	Full Run() reserved for: login, BAG_CONTAINER_UPDATE, stack-merge disable,
 	needsFinalize fallback, _scanDirty open. See bagforge-conventions.mdc.
@@ -82,7 +82,7 @@ local ITEM_CLASS_TRADEGOODS = Enum.ItemClass.Tradegoods
 -- max stack size, display name and expansion id. All come from one GetItemInfo
 -- call (the slow API) so we never call it three times for the same item, and
 -- they're cached because they can't change for an item type. Any field is nil
--- until GetItemInfo has the item cached; the ContinuableContainer await in Run()
+-- until GetItemInfo has the item cached, the ContinuableContainer await in Run()
 -- guarantees a complete rebuild pass once the data arrives.
 local maxStackCache = {}
 local nameCache = {}
@@ -151,8 +151,8 @@ local function CacheUnusable(entry, itemInfo)
 	entry.isUnusable = itemInfo:IsUnusable(entry) and true or false
 end
 
---- Pre-compute overlay fields the item button reads at paint time (BetterBags
---- Phase 5: presentation-only buttons). Refreshed on scan, item-ID refresh, and
+--- Pre-compute overlay fields the item button reads at paint time
+--- (presentation-only buttons). Refreshed on scan, item-ID refresh, and
 --- when Pawn/ItemInfo toggles change.
 local function ApplyDisplayFields(entry, itemInfo)
 	if itemInfo then
@@ -184,6 +184,14 @@ local function ApplyDisplayFields(entry, itemInfo)
 			entry.isUpgrade = pawn:IsUpgrade(entry.hyperlink) and true or false
 		end
 	end
+
+	-- Grey out junk: desaturate poor-quality / custom-junk icons.
+	-- IsItemJunk already excludes pet-trash and honours the
+	-- custom-junk list and junk plugins. Independent of the item-info master.
+	entry.showGreyJunk = false
+	if db and db.greyJunk and ns.API and ns.API.IsItemJunk and ns.API:IsItemJunk(entry) then
+		entry.showGreyJunk = true
+	end
 end
 
 local ContinuableContainer = _G["ContinuableContainer"]
@@ -203,9 +211,9 @@ local function ResolveHyperlink(bag, slot, info, record)
 end
 
 -- Instance quality (bonus IDs / upgrades), not base itemID quality.
--- GetItemQualityByID(itemID) alone returns the template — often Uncommon/green
--- while the bag slot is Epic/purple. Baganator live buttons use cache/container
--- quality; only bank *bag* chrome re-paints with GetItemQualityByID(itemID).
+-- GetItemQualityByID(itemID) alone returns the template - often Uncommon/green
+-- while the bag slot is Epic/purple. Live buttons use cache/container
+-- quality, only bank *bag* chrome re-paints with GetItemQualityByID(itemID).
 local function ResolveItemQuality(bag, slot, info, record, itemID, hyperlink)
 	local quality = info and info.quality
 	if quality == nil and bag and slot and ItemLocation and C_Item.GetItemQuality then
@@ -218,7 +226,7 @@ local function ResolveItemQuality(bag, slot, info, record, itemID, hyperlink)
 		quality = record and record.itemQuality
 	end
 	if quality == nil and hyperlink and C_Item.GetItemQualityByID then
-		-- ItemInfo accepts a full link — keeps bonus-ID quality.
+		-- ItemInfo accepts a full link - keeps bonus-ID quality.
 		quality = C_Item.GetItemQualityByID(hyperlink)
 	end
 	if quality == nil and itemID and C_Item.GetItemQualityByID then
@@ -307,13 +315,12 @@ function Scan.RefreshDisplayFieldsAll()
 end
 
 -- ---------------------------------------------------------------------------
--- Sorting (Baganator-style key chains)
+-- Sorting
 --   Category order first (so panels draw in a stable order), then category
 --   NAME (so two categories that share an order stay contiguous). Within a
 --   category the player's "Item Sort" choice selects a key chain (class, slot,
 --   subclass, ilvl, expansion, quality, name, itemID) rather than a single-field
---   comparator. Custom class/subclass/slot order tables come from Baganator's
---   ItemFields.lua (Phraxik's ordering). Plugin sort modes still register a
+--   comparator. Custom class/subclass/slot order tables come from --   ItemFields.lua (Phraxik's ordering). Plugin sort modes still register a
 --   bespoke comparator via Scan.RegisterWithin.
 -- ---------------------------------------------------------------------------
 local function BuildSortMap(list)
@@ -544,7 +551,7 @@ local function MakeKeyChainComparator(keys)
 	end
 end
 
--- Baganator Order.lua chains, adapted: quality mode keeps higher quality first
+-- Sort key chains: quality mode keeps higher quality first
 -- (invertedQuality) to match Bagforge's historical behaviour.
 local KEY_CHAINS = {
 	quality = { "invertedQuality", "sortedClassID", "sortedInvSlotID", "sortedSubClassID", "itemLevelRaw", "invertedExpansion", "itemName", "invertedItemID", "invertedItemCount" },
@@ -562,10 +569,10 @@ local WITHIN = {
 	vendor = MakeKeyChainComparator(KEY_CHAINS.vendor),
 }
 
--- Swapped by Scan.SetSortMode; defaults to the historical quality-first chain.
+-- Swapped by Scan.SetSortMode, defaults to the historical quality-first chain.
 local activeWithin = WITHIN.quality
 
--- Built-in modes; the rest of WITHIN is filled by plugins (Scan.RegisterWithin).
+-- Built-in modes, the rest of WITHIN is filled by plugins (Scan.RegisterWithin).
 local BUILTIN_WITHIN = { quality = true, name = true, ilvl = true, expansion = true, vendor = true }
 
 --- Set the within-category item sort ("quality" | "name" | "ilvl" |
@@ -830,7 +837,7 @@ local function PopulateEntryFromSlot(self, entry, bag, slot, ctx)
 		itemEquipLoc = record.itemEquipLoc
 	end
 	local hyperlink = ResolveHyperlink(bag, slot, info, record)
-	-- Container / link / ItemLocation first — never prefer bare itemID quality
+	-- Container / link / ItemLocation first - never prefer bare itemID quality
 	-- (bonus-ID epics look Uncommon via GetItemQualityByID(itemID)).
 	local quality = ResolveItemQuality(bag, slot, info, record, itemID, hyperlink)
 
@@ -857,7 +864,7 @@ local function PopulateEntryFromSlot(self, entry, bag, slot, ctx)
 	entry.itemGUID = ns.Recent and ns.Recent.GetSlotGUID and ns.Recent:GetSlotGUID(bag, slot) or nil
 	entry.isNewItem = EntryIsNewItem(bag, slot, entry.itemGUID) and true or false
 	ApplyQuestFields(entry, questInfo)
-	-- inSet is a bool (ContainerDocumentation); normalize like isLocked/isBound.
+	-- inSet is a bool (ContainerDocumentation), normalize like isLocked/isBound.
 	local inSet = GetContainerItemEquipmentSetInfo and GetContainerItemEquipmentSetInfo(bag, slot)
 	entry.isInSet = inSet == true
 	entry.itemType = itemType
@@ -889,7 +896,7 @@ end
 --- Synchronous build: walk `bags`, classify each occupied slot through the
 --- shared Categories module, sort, and build sections. Results land on the
 --- instance. Sets self._incomplete when any occupied item's data isn't cached
---- yet (so ilvl/bind may be missing); Run() uses that to schedule an await.
+--- yet (so ilvl/bind may be missing), Run() uses that to schedule an await.
 local function CountBagFreeAndTotal(bags)
 	local free, total = 0, 0
 	for _, bag in ipairs(bags) do
@@ -944,7 +951,7 @@ local function ScanBagIntoSlots(self, bag, buildCtx)
 end
 
 --- Debounced onComplete: ContinuableContainer's second pass coalesces with the
---- immediate build into one Items.Updated / bank DrawLayout (BetterBags-style).
+--- immediate build into one Items.Updated / bank DrawLayout.
 function meta:_ScheduleScanComplete(onComplete)
 	if not onComplete then
 		return
@@ -1074,6 +1081,7 @@ local function SnapshotEntryPaint(entry)
 		showBindLabel = entry.showBindLabel,
 		isUpgrade = entry.isUpgrade,
 		isUnusable = entry.isUnusable,
+		showGreyJunk = entry.showGreyJunk,
 		classID = entry.classID,
 		subClassID = entry.subClassID,
 	}
@@ -1087,11 +1095,12 @@ local function EntryPaintChanged(snap, entry)
 		or entry.showBindLabel ~= snap.showBindLabel
 		or entry.isUpgrade ~= snap.isUpgrade
 		or entry.isUnusable ~= snap.isUnusable
+		or entry.showGreyJunk ~= snap.showGreyJunk
 		or entry.classID ~= snap.classID
 		or entry.subClassID ~= snap.subClassID
 end
 
---- Apply a category change on a live entry; move section lists when possible.
+--- Apply a category change on a live entry, move section lists when possible.
 local function TryApplyCategoryChange(self, entry, newCat, changeset, junkCategory)
 	local oldCat = entry.category
 	if not newCat or oldCat == newCat then
@@ -1462,7 +1471,7 @@ function meta:RefreshAfterSort(bags, onComplete)
 		end
 	end
 
-	-- Too many unknown items (loot during sort, new stacks) — full rescan is safer.
+	-- Too many unknown items (loot during sort, new stacks) - full rescan is safer.
 	if ctx.fastMisses > 0 and ctx.fastMisses > occupied * 0.15 then
 		self:Run(bags, onComplete)
 		return
@@ -1517,7 +1526,7 @@ end
 
 --- Collapse entries that share a MergeKey into one display entry whose count is
 --- the group total. The largest individual stack is kept as the visible/clickable
---- root (so clicking grabs the biggest pile); the rest are dropped from the slot
+--- root (so clicking grabs the biggest pile), the rest are dropped from the slot
 --- list. Counts are reset fresh every _Build, so mutating entry.count is safe.
 ---
 --- Merged-away slots are tracked on `root._mergedSlots` so lock/quest updates on
@@ -1601,7 +1610,7 @@ end
 function meta:Run(bags, onComplete, dirtyBags, dirtySlotKeys)
 	self._scanGen = (self._scanGen or 0) + 1
 	local gen = self._scanGen
-	-- A full/partial rebuild owns the slot list; abandon any mid-flight reclassify.
+	-- A full/partial rebuild owns the slot list, abandon any mid-flight reclassify.
 	if self.CancelCategoryRefresh then
 		self:CancelCategoryRefresh()
 	end
@@ -1627,7 +1636,7 @@ function meta:Run(bags, onComplete, dirtyBags, dirtySlotKeys)
 	end
 
 	container:ContinueOnLoad(function()
-		-- A newer scan already ran; let it own the result.
+		-- A newer scan already ran, let it own the result.
 		if self._scanGen ~= gen then
 			return
 		end
@@ -1835,7 +1844,7 @@ local function RefreshEntryItemFields(entry, itemID)
 	entry.itemEquipLoc = itemEquipLoc
 	entry.classID = classID
 	entry.subClassID = subClassID
-	-- Prefer link / live slot over GetItemQualityByID(itemID) — base template
+	-- Prefer link / live slot over GetItemQualityByID(itemID) - base template
 	-- quality is often lower than the bonus-ID instance in the bag.
 	local q = ResolveItemQuality(entry.bag, entry.slot, nil, record, itemID, entry.hyperlink)
 	if q ~= nil then
@@ -1936,7 +1945,7 @@ end
 
 --- Cancel an in-flight budgeted RefreshCategories (newer refresh or full Run).
 --- Still fire onComplete(false, false) so ApplyScannerRefresh's pending count
---- cannot stick forever; false/false means "no UI mutation from this pass".
+--- cannot stick forever, false/false means "no UI mutation from this pass".
 function meta:CancelCategoryRefresh()
 	local wasPending = self._catRefreshPending
 	local onComplete = self._catRefreshOnComplete
@@ -1951,7 +1960,7 @@ end
 --- Re-run category classification on existing entries without a full bag walk.
 --- Returns changed, needsFinalize[, pending].
 --- When the ~100ms frame budget is exceeded, work resumes next frame and
---- `pending` is true; `onComplete(changed, needsFinalize)` fires when done.
+--- `pending` is true, `onComplete(changed, needsFinalize)` fires when done.
 --- Pass accumulate=true to merge into the existing changeset.
 function meta:RefreshCategories(accumulate, onComplete)
 	local categories = ns:GetModule("Categories")
@@ -1987,7 +1996,7 @@ function meta:RefreshCategories(accumulate, onComplete)
 		self._catRefreshPending = nil
 		self._catRefreshOnComplete = nil
 		local changed, needsFinalize = state.anyChanged, state.needsFinalize
-		-- Async resume path: caller already returned pending; notify via callback.
+		-- Async resume path: caller already returned pending, notify via callback.
 		if state.resumed and onComplete then
 			onComplete(changed, needsFinalize)
 		end

@@ -6,15 +6,15 @@
 	a plugin can contribute today:
 
 	  * Categories - a filter that routes matching items into a named bag panel,
-	    modelled on BetterBags' RegisterCategoryFunction (return a name, or nil
-	    to pass). Bagforge owns priority and redraws; the
+	    modelled on RegisterCategoryFunction (return a name, or nil
+	    to pass). Bagforge owns priority and redraws, the
 	    plugin only answers "does this item belong, and where".
 	  * Sort modes  - a within-category comparator that shows up as a choice in
 	    the Item Sort dropdown.
 	  * Corner widgets - per-item overlays (upgrade arrows, etc.) on bag buttons.
-	  * Item button callbacks - full-button overlays (TransmogLootHelper, etc.);
+	  * Item button callbacks - full-button overlays (e.g. transmog/loot helpers).
 	    see RegisterItemButtonCallback / RequestItemButtonsRefresh.
-	  * Junk detectors   - third-party junk overlays (Dejunk, Scrap, etc.);
+	  * Junk detectors   - third-party junk overlays.
 	    see RegisterJunkDetector / IsItemJunk.
 
 	Design rules that keep this safe:
@@ -24,7 +24,7 @@
 	  * Use API:SafeSortNumber() to normalize missing numeric scan fields in custom
 	    sort comparators.
 	  * Each registration is attributed to a "source" (the owning plugin). The
-	    settings Plugins page lists sources and lets the player toggle each one;
+	    settings Plugins page lists sources and lets the player toggle each one.
 	    a disabled source contributes nothing.
 
 	Example (in a separate addon that lists Bagforge as a dependency):
@@ -47,7 +47,7 @@
 	    end
 
 	Registering after the player has logged in reclassifies the bags on the
-	spot; the Item Sort dropdown and Plugins page are built once at login, so a
+	spot, the Item Sort dropdown and Plugins page are built once at login, so a
 	sort/source added later only lists after a /reload.
 --]]
 
@@ -131,7 +131,7 @@ local function EnsureSource(displayName)
 		-- Seed the per-source enable flag (default on) so the settings checkbox
 		-- has a real boolean to bind to (Settings.RegisterAddOnSetting needs a
 		-- typed default). Touch both the defaults tree and the live profile so a
-		-- profile switch picks it up too; never clobber a saved choice.
+		-- profile switch picks it up too, never clobber a saved choice.
 		local defaults = ns.defaults and ns.defaults.profile and ns.defaults.profile.plugins
 		if defaults and defaults[srcKey] == nil then
 			defaults[srcKey] = true
@@ -450,7 +450,7 @@ local junkDefs = {} -- array
 local junkByKey = {}
 
 -- ---------------------------------------------------------------------------
--- Junk detectors (Dejunk / Scrap / SellJunk-style third-party junk overlays)
+-- Junk detectors (third-party junk overlays)
 -- ---------------------------------------------------------------------------
 
 --- Register a junk detector. `def`:
@@ -555,11 +555,11 @@ function API:IsItemJunk(entry)
 end
 
 -- ---------------------------------------------------------------------------
--- Item button callbacks (full-button overlays, e.g. TransmogLootHelper)
+-- Item button callbacks (full-button overlays)
 -- ---------------------------------------------------------------------------
 
 --- Register a callback invoked whenever a bag item button is populated or cleared.
---- `func(button, bagID, slotID, entry)` — entry is nil when the slot is empty.
+--- `func(button, bagID, slotID, entry)` - entry is nil when the slot is empty.
 --- Mirrors OneWoW_Bags:RegisterItemButtonCallback for third-party overlay addons.
 function API:RegisterItemButtonCallback(key, func)
 	if type(key) ~= "string" or key == "" then
@@ -594,8 +594,8 @@ function API:UnregisterItemButtonCallback(key)
 	return false
 end
 
---- Ask Bagforge to redraw visible item buttons (display-only; no rescan).
---- Optional `reason` mirrors Baganator RefreshReason / ns.C.RefreshReason:
+--- Ask Bagforge to redraw visible item buttons (display-only, no rescan).
+--- Optional `reason` is one of ns.C.RefreshReason:
 ---   paint | headers | layout | reclassify | chrome (default paint, debounced).
 function API:RequestItemButtonsRefresh(reason)
 	local paint = (ns.C and ns.C.RefreshReason and ns.C.RefreshReason.paint) or "paint"

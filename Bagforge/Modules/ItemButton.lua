@@ -7,9 +7,9 @@
 	just feed it a bag id (on the parent) and a slot id (on the button), exactly
 	as the default bags do.
 
-	Two non-obvious tricks, both lifted from BetterBags:
+	Two non-obvious tricks:
 	  * The ItemButton lives inside a plain throwaway parent frame. The parent
-	    carries the bag id and is what the view anchors; this sidesteps the 10.x
+	    carries the bag id and is what the view anchors, this sidesteps the 10.x
 	    item-button taint where reparenting a live container button gets cranky.
 	  * We pre-warm the pool out of combat. A secure button created mid-combat
 	    can taint the whole bag frame, so every button the player could possibly
@@ -60,7 +60,7 @@ local slotsByBag = {}
 local combatLayoutPending = false
 local bankRouted = setmetatable({}, { __mode = "k" })
 local highlightedBagID = nil
-local FindSlotButton -- forward decl; assigned below RefreshSlot helpers
+local FindSlotButton -- forward decl, assigned below RefreshSlot helpers
 
 local function ClearBagHighlightFor(bagID)
 	local set = slotsByBag[bagID]
@@ -147,7 +147,7 @@ end
 -- ---------------------------------------------------------------------------
 -- Button behaviour
 --   `self` is the parent frame (the thing the view anchors). It owns the bag
---   id; `self.button` is the actual ItemButton and owns the slot id. Methods
+--   id, `self.button` is the actual ItemButton and owns the slot id. Methods
 --   are module-level function references (not per-button closures) so a pool of
 --   hundreds doesn't cost hundreds of duplicate closures.
 -- ---------------------------------------------------------------------------
@@ -187,7 +187,7 @@ local function ApplyUnusableTint(parent, entry)
 end
 
 -- Warband / bank deposit dim is Blizzard ItemContextOverlay (0.8 black) via
--- UpdateItemContextMatching — do NOT add a second overlay. 1.5.0 stacked an
+-- UpdateItemContextMatching - do NOT add a second overlay. 1.5.0 stacked an
 -- Ellesmere-style 0.75 dim on top and icons went pitch black.
 
 -- `entry` is one slot record from Items:GetSlots().
@@ -208,6 +208,7 @@ local function SnapshotButtonPaint(entry)
 		showBindLabel = entry.showBindLabel,
 		isUpgrade = entry.isUpgrade,
 		isUnusable = entry.isUnusable,
+		showGreyJunk = entry.showGreyJunk,
 		itemID = entry.itemID,
 		isNewItem = entry.isNewItem,
 	}
@@ -229,6 +230,7 @@ local function ButtonPaintUnchanged(snap, entry)
 		and snap.showBindLabel == entry.showBindLabel
 		and snap.isUpgrade == entry.isUpgrade
 		and snap.isUnusable == entry.isUnusable
+		and snap.showGreyJunk == entry.showGreyJunk
 		and snap.itemID == entry.itemID
 		and snap.isNewItem == entry.isNewItem
 end
@@ -274,9 +276,9 @@ local function Button_SetItem(self, entry)
 	SetItemButtonCount(self.button, entry.count or 1)
 	-- ClearItemButtonOverlay does NOT clear IconBorder (ItemButtonTemplate.lua).
 	-- Always SetItemButtonQuality so recycled buttons don't keep a stale ring.
-	-- Quality must be the *instance* (container / link / ItemLocation) — bare
+	-- Quality must be the *instance* (container / link / ItemLocation) - bare
 	-- GetItemQualityByID(itemID) is the item template and often Uncommon/green
-	-- while bonus-ID gear is Epic (Baganator live buttons use cache/container).
+	-- while bonus-ID gear is Epic.
 	local quality = nil
 	local bag, slot = entry.bag, entry.slot
 	if bag and slot and ItemLocation and C_Item.GetItemQuality then
@@ -305,7 +307,7 @@ local function Button_SetItem(self, entry)
 			SetItemCraftingQualityOverlay(self.button, link)
 		end
 	end
-	SetItemButtonDesaturated(self.button, entry.isLocked)
+	SetItemButtonDesaturated(self.button, entry.isLocked or entry.showGreyJunk or false)
 
 	self.button:SetHasItem(entry.icon)
 	if self.button.UpdateExtended then
@@ -383,7 +385,7 @@ local function Button_SetItem(self, entry)
 		end
 	end
 
-	-- Pawn upgrade arrow — pre-computed on the entry as entry.isUpgrade.
+	-- Pawn upgrade arrow - pre-computed on the entry as entry.isUpgrade.
 	local upgradeIcon = self.button.upgradeIcon
 	if upgradeIcon then
 		upgradeIcon:SetShown(entry.isUpgrade == true)
@@ -400,8 +402,8 @@ local function Button_SetItem(self, entry)
 		self.button.bfSortLock:SetShown(locked and true or false)
 	end
 
-	-- Top-left markers. The star flags a custom-assigned item (NDui's Favourite
-	-- cue); the coin flags junk - both the game's natural Poor-quality junk AND
+	-- Top-left markers. The star flags a custom-assigned item (Favourite
+	-- cue), the coin flags junk - both the game's natural Poor-quality junk AND
 	-- anything the player custom-flagged - shown always (not just at a merchant,
 	-- which is all Blizzard's own JunkIcon does). Only one shows: star wins.
 	local tag, junkMark = self.button.bfTag, self.button.bfJunk
@@ -500,7 +502,7 @@ local function Button_Clear(self)
 	end
 end
 
--- Ctrl is WoW's default DRESSUP modifier; delete mode installs a narrow global
+-- Ctrl is WoW's default DRESSUP modifier, delete mode installs a narrow global
 -- hook via InstallDeleteClickHook (Organize:SetMode) so Ctrl+Alt is not stolen
 -- from other bag addons while delete mode is disarmed.
 
@@ -546,7 +548,7 @@ end
 -- "set category" menu instead of doing anything with the item. This is a post
 -- -hook (observation only, no taint): Blizzard's default left-click picks the
 -- item up onto the cursor, so we ClearCursor() to drop it straight back before
--- showing the menu - exactly how NDui's Favourite mode behaves.
+-- showing the menu - exactly how Favourite mode behaves.
 local function OnItemButtonClick(button, mouseButton)
 	if mouseButton == "RightButton" and bankRouted[button] then
 		bankRouted[button] = nil
@@ -664,7 +666,7 @@ function ItemButton:FlashButton(button)
 	end)
 end
 
---- Alt-click flash-find (Bagnon flashFind): pulse every visible stack of `itemID`.
+--- Alt-click flash-find: pulse every visible stack of `itemID`.
 function ItemButton:FlashFind(itemID)
 	if not itemID then
 		return
@@ -685,10 +687,77 @@ end
 -- ---------------------------------------------------------------------------
 -- Pool plumbing
 -- ---------------------------------------------------------------------------
+-- ---------------------------------------------------------------------------
+-- Masque (optional): skin the pooled item buttons when the addon is installed.
+-- Masque auto-detects the standard ItemButton regions (icon, border, count,
+-- cooldown, ...) for the "Item" button type, so a plain AddButton is enough.
+-- The group registers itself with Masque on first button, users then skin it
+-- under Masque > Bagforge > Bags. Custom overlays (item level, junk coin, star)
+-- live outside Masque's region set and are untouched.
+-- ---------------------------------------------------------------------------
+local masqueLib, masqueChecked
+local masqueGroups = {} -- group name -> Masque group ("Bags" for the grid, "Bag Bar" for the bar)
+
+local function GetMasqueGroup(name)
+	if not masqueChecked then
+		masqueChecked = true
+		-- Looked up lazily (first button is created at PLAYER_LOGIN, by which point
+		-- Masque and its embedded LibStub have loaded) rather than captured at file
+		-- scope, so detection doesn't hinge on TOC load order.
+		local LibStub = _G["LibStub"]
+		masqueLib = (LibStub and LibStub("Masque", true)) or false
+	end
+	if not masqueLib then
+		return nil
+	end
+	local group = masqueGroups[name]
+	if not group then
+		group = masqueLib:Group("Bagforge", name)
+		masqueGroups[name] = group
+		-- Fire an internal signal when the user changes this group's skin so
+		-- chrome we draw ourselves (e.g. the free-slot empty background) can hide
+		-- or show to match whether Masque is now painting the slot.
+		if group.RegisterCallback then
+			group:RegisterCallback(function()
+				ns:TriggerCallback("Masque.SkinChanged", name)
+			end)
+		end
+	end
+	return group
+end
+
+--- True when Masque is installed and actively skinning `name`'s group (so we
+--- should suppress our own slot chrome and let the skin own the look).
+function ItemButton:IsMasqueActive(name)
+	local group = GetMasqueGroup(name or "Bags")
+	return group ~= nil and not (group.db and group.db.Disabled)
+end
+
+local function SkinButton(button, groupName)
+	local group = GetMasqueGroup(groupName or "Bags")
+	if not group then
+		return
+	end
+	if button.bfMasque then
+		group:ReSkin(button)
+	else
+		button.bfMasque = true
+		group:AddButton(button, nil, "Item")
+	end
+end
+
+--- Public entry so other modules (free slots, bag bar) can skin their own
+--- ItemButtons through the same Masque groups. No-op unless Masque is installed.
+function ItemButton:MasqueSkin(button, groupName)
+	if button then
+		SkinButton(button, groupName)
+	end
+end
+
 local function CreateButton()
 	-- Never birth a secure ContainerFrameItemButtonTemplate mid-combat: a button
 	-- created under lockdown taints UseContainerItem (ADDON_ACTION_FORBIDDEN in
-	-- M+/Delves). The pre-warmed pool should cover normal counts; this guard is
+	-- M+/Delves). The pre-warmed pool should cover normal counts, this guard is
 	-- the belt on Acquire() when the pool is somehow exhausted in combat.
 	if InCombatLockdown() then
 		ItemButton:FlagCombatLayoutPending()
@@ -701,8 +770,8 @@ local function CreateButton()
 	-- Hidden parent: holds the bag id and is what the grid anchors.
 	local parent = CreateFrame("Button", name .. "Parent", UIParent)
 	parent:SetSize(C.Layout.ITEM_SIZE, C.Layout.ITEM_SIZE)
-	-- Blizzard's ItemButton Initialize calls GetBagID on the parent; without a
-	-- bag container stub this can nil-crash in combat (BetterBags #991).
+	-- Blizzard's ItemButton Initialize calls GetBagID on the parent, without a
+	-- bag container stub this can nil-crash in combat.
 	parent.IsCombinedBagContainer = function()
 		return false
 	end
@@ -711,7 +780,7 @@ local function CreateButton()
 	button:SetAllPoints(parent)
 	button:RegisterForDrag("LeftButton")
 	button:RegisterForClicks("LeftButtonUp", "RightButtonUp")
-	-- Let scroll events reach the parent WowScrollBox (BetterBags item.lua).
+	-- Let scroll events reach the parent WowScrollBox.
 	button:SetScript("OnMouseWheel", nil)
 	if button.EnableMouseWheel then
 		button:EnableMouseWheel(false)
@@ -778,7 +847,7 @@ local function CreateButton()
 
 	-- Custom-junk marker (coin), shown on items marked as junk. Uses the same
 	-- "bags-junkcoin" atlas as Blizzard's own merchant junk coin so it reads as
-	-- junk at a glance. Shares the corner with the star; only one shows at a time
+	-- junk at a glance. Shares the corner with the star, only one shows at a time
 	-- (star wins). Drawn one sublevel up so it sits above the item texture.
 	local junk = button:CreateTexture(nil, "OVERLAY", nil, 7)
 	junk:SetAtlas("bags-junkcoin")
@@ -800,6 +869,8 @@ local function CreateButton()
 	parent.button = button
 	parent.SetItemEntry = Button_SetItem
 	parent.ClearItem = Button_Clear
+
+	SkinButton(button) -- no-op unless Masque is installed
 
 	return parent
 end
@@ -881,7 +952,7 @@ function ItemButton:RefreshCooldowns()
 	end
 end
 
---- Lock flash only — Baganator LiveBagOnEvent ITEM_LOCK_CHANGED (no full Draw).
+--- Lock flash only - ITEM_LOCK_CHANGED (no full Draw).
 function ItemButton:RefreshLock(bag, slot)
 	local parent = FindSlotButton(bag, slot)
 	if not (parent and parent.button) then
@@ -895,11 +966,13 @@ function ItemButton:RefreshLock(bag, slot)
 	if parent.entry then
 		parent.entry.isLocked = locked
 	end
-	SetItemButtonDesaturated(parent.button, locked)
+	-- Keep junk-grey after the lock clears (sort/drag unlock must not un-grey junk).
+	local greyJunk = parent.entry and parent.entry.showGreyJunk
+	SetItemButtonDesaturated(parent.button, locked or greyJunk or false)
 	ApplyUnusableTint(parent, parent.entry)
 end
 
---- Quest bang / border only — UNIT_QUEST_LOG_CHANGED / QUEST_ACCEPTED.
+--- Quest bang / border only - UNIT_QUEST_LOG_CHANGED / QUEST_ACCEPTED.
 function ItemButton:RefreshQuests()
 	local getQuest = C_Container.GetContainerItemQuestInfo
 	if not getQuest then
@@ -962,7 +1035,7 @@ function ItemButton:OnEnable()
 		handles[#handles + 1] = { "BAG_UPDATE_COOLDOWN", cooldownHandle }
 	end
 
-	-- Narrow paints — never full Items:Flush / Draw (Baganator Layouts LiveBagOnEvent).
+	-- Narrow paints - never full Items:Flush / Draw.
 	ns:TrackEvent(handles, "ITEM_LOCK_CHANGED", function(_, bag, slot)
 		if bag and slot then
 			ItemButton:RefreshLock(bag, slot)
@@ -1040,7 +1113,7 @@ function ItemButton:Acquire()
 	if not pool then
 		return nil
 	end
-	-- Reuse pooled buttons in combat; never grow the pool under lockdown.
+	-- Reuse pooled buttons in combat, never grow the pool under lockdown.
 	if InCombatLockdown() and pool.numFree <= 0 then
 		self:FlagCombatLayoutPending()
 		return nil

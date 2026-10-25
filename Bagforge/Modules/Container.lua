@@ -2,8 +2,8 @@
 	Bagforge - Container (per-category panel)
 	-------------------------------------------------------------------------
 	A "container" is one bordered panel that shows a single category: a header
-	label on top and a grid of item buttons below. This is the cargBags idea
-	(NDui ships a derivative): specialty filters get their own panels stacked
+	label on top and a grid of item buttons below. The idea: specialty filters
+	get their own panels stacked
 	above the main "Bag" panel, which owns the search bar, money and controls.
 
 	A Container is a plain Lua object (not a frame) wrapping a backdrop frame, so
@@ -60,7 +60,7 @@ local function EnsureSettingsTemplate()
 end
 
 --- Blizzard's combined-bags backpack shows four padlocked slots (and a green "+"
---- button) when the account is not Battle.net Authenticator–secured. Mirrors
+--- button) when the account is not Battle.net Authenticator-secured. Mirrors
 --- ContainerFrame_GetContainerNumSlots / ContainerFrameExtendedSlotPack.
 local function EnsureExtendedSlotTemplates()
 	if extendedTemplatesReady then
@@ -201,7 +201,7 @@ local function FreeSlot_Deposit(free)
 		for slot = 1, numSlots do
 			local info = C_Container.GetContainerItemInfo(bag, slot)
 			-- Empty only. Occupied slots used to match here and stole the cursor
-			-- onto the first item in the bag — not the free slot.
+			-- onto the first item in the bag - not the free slot.
 			if not info or not info.itemID then
 				C_Container.PickupContainerItem(bag, slot)
 				return
@@ -239,11 +239,36 @@ end
 
 local freeSlotCount = 0
 
+-- Every free slot we've built, so a Masque skin change can re-evaluate whether
+-- our own empty-slot art should show. Weak keys: released slots can be collected.
+local freeSlotRegistry = setmetatable({}, { __mode = "k" })
+
+--- Show our "bags-item-slot64" empty art only when Masque is NOT skinning the
+--- Bags group, otherwise let the skin own the slot's look.
+local function ApplyFreeSlotChrome(free)
+	if not (free and free.slotBG) then
+		return
+	end
+	local itemButton = ns:GetModule("ItemButton")
+	local masque = itemButton and itemButton.IsMasqueActive and itemButton:IsMasqueActive("Bags")
+	free.slotBG:SetShown(not masque)
+end
+
+-- Re-apply when the player changes the Bags skin in Masque's options.
+ns:RegisterCallback("Masque.SkinChanged", function(_, name)
+	if name and name ~= "Bags" then
+		return
+	end
+	for free in pairs(freeSlotRegistry) do
+		ApplyFreeSlotChrome(free)
+	end
+end)
+
 local function AddFreeSlot(container)
 	-- Bare ItemButton intrinsic: same base slot frame, but without the container
 	-- template's new-item/context glow and tooltip OnUpdate. Slot chrome matches
-	-- Baganator's retail item buttons (bags-item-slot64 on the icon region) rather
-	-- than ItemSlotBackgroundCombinedBagsTemplate; we keep cargBags' centered count.
+	-- retail item buttons (bags-item-slot64 on the icon region) rather
+	-- than ItemSlotBackgroundCombinedBagsTemplate, we keep centered count.
 	freeSlotCount = freeSlotCount + 1
 	local free = CreateFrame("ItemButton", "BagforgeFreeSlot" .. freeSlotCount, container.frame)
 	free:SetSize(C.Layout.ITEM_SIZE, C.Layout.ITEM_SIZE)
@@ -278,6 +303,16 @@ local function AddFreeSlot(container)
 	free:SetScript("OnEnter", FreeSlot_OnEnter)
 	free:SetScript("OnLeave", FreeSlot_OnLeave)
 
+	-- Skin the empty slot to match the grid's item buttons (same "Bags" group).
+	-- When Masque is painting the slot, hide our own empty-slot art so the two
+	-- backgrounds don't double up.
+	local itemButton = ns:GetModule("ItemButton")
+	if itemButton and itemButton.MasqueSkin then
+		itemButton:MasqueSkin(free)
+	end
+	freeSlotRegistry[free] = true
+	ApplyFreeSlotChrome(free)
+
 	container.freeSlot = free
 end
 
@@ -305,7 +340,7 @@ function Container.New(parent, name, showClose)
 	local frame = CreateFrame("Frame", name, parent, "SettingsFrameTemplate")
 	frame:Hide()
 
-	-- Use the template's own title FontString (GameFontNormal = Blizzard yellow);
+	-- Use the template's own title FontString (GameFontNormal = Blizzard yellow).
 	-- no colour override, so it matches the default UI.
 	local header = frame.NineSlice and frame.NineSlice.Text or F.CreateFS(frame, 12, "", "OVERLAY")
 	header:SetJustifyH("CENTER")
@@ -322,9 +357,9 @@ function Container.New(parent, name, showClose)
 	}, methods)
 end
 
---- Main "Bag" panel (cargBags anchor). Title shows when Layout gets
---- `showMainTitle`; it owns the "free slot" box - a fake empty slot that shows
---- the free-slot count and trails the last item, exactly like cargBags' [space].
+--- Main "Bag" panel. Title shows when Layout gets
+--- `showMainTitle`, it owns the "free slot" box - a fake empty slot that shows
+--- the free-slot count and trails the last item, exactly like [space].
 function Container.NewMain(parent)
 	local container = Container.New(parent, "BagforgeBackpackFrame", true)
 	container.isMain = true
@@ -352,7 +387,7 @@ end
 -- ---------------------------------------------------------------------------
 -- Layout
 --   Place the header and one item button per entry. Specialty panels shrink to
---   their item count (capped at `columns`) unless `forceWidth` is set; the main
+--   their item count (capped at `columns`) unless `forceWidth` is set, the main
 --   panel passes forceWidth so it spans the full grid. `opts.topInset` and
 --   `opts.bottomInset` reserve space for the main panel's chrome row and footer.
 --   Returns width and height.
@@ -365,7 +400,7 @@ end
 -- global display epoch that the display-only toggles bump (item level / bind
 -- labels / unusable tint / Pawn arrows) so those still force a repaint.
 local function FoldHash(h, v)
-	-- Lua 5.1 numbers are doubles; keep the fold in a stable integer range.
+	-- Lua 5.1 numbers are doubles, keep the fold in a stable integer range.
 	return (h * 31 + (v or 0)) % 2147483647
 end
 
@@ -418,7 +453,7 @@ local function PaintHashEntry(h, e)
 	h = SafeFold(h, e.itemID)
 	h = SafeFold(h, e.count)
 	h = SafeFold(h, e.quality)
-	-- Normalized scan booleans are plain true/false; still fold safely.
+	-- Normalized scan booleans are plain true/false, still fold safely.
 	h = FoldHash(h, e.isFiltered == true and 1 or 0)
 	h = FoldHash(h, e.isLocked == true and 1 or 0)
 	h = FoldHash(h, e.isNewItem == true and 1 or 0)
@@ -639,7 +674,7 @@ local function PlaceLayoutButton(container, i, entry, columns, size, pad, leftX,
 		local row = floor((i - 1) / columns)
 		-- Icon size is applied with SetScale, not SetSize: the ItemButton template's
 		-- border/quality/quest textures are fixed-size and a SetSize leaves them
-		-- misaligned. SetScale grows the whole button uniformly (Baganator's method).
+		-- misaligned. SetScale grows the whole button uniformly.
 		-- Anchor offsets live in the button's scaled space, so divide by the scale.
 		local scale = size / C.Layout.ITEM_SIZE
 		button:SetScale(scale)
@@ -757,7 +792,7 @@ function methods:Layout(section, columns, opts)
 
 	if self._structSig == structSig and self._lastW then
 		if self._paintSig == paintSig then
-			-- In-flight batch already matches this layout — let it finish.
+			-- In-flight batch already matches this layout - let it finish.
 			-- Cancelling here used to clear work while leaving signatures set.
 			self.frame:Show()
 			return self._lastW, self._lastH
@@ -779,7 +814,7 @@ function methods:Layout(section, columns, opts)
 		local name = section and section.name
 		self.header:SetText(BuildHeaderText(section, name))
 		-- Custom header tint (Modules/Organize): a custom/search category can
-		-- carry a colour; group-by sub-panels ("<name>: <suffix>") inherit the
+		-- carry a colour, group-by sub-panels ("<name>: <suffix>") inherit the
 		-- parent's. Falls back to the template's default yellow.
 		local o = ns.db and ns.db.organize
 		local color = o and o.colors and name and o.colors[name]
@@ -815,8 +850,8 @@ function methods:Layout(section, columns, opts)
 		-- layoutVisibleScratch is a single module-level table that LayoutEntries()
 		-- returns directly when search-hide filtering is active. Any sibling container's
 		-- Layout() call before _AdvanceLayoutBatch fires next frame wipes it and
-		-- refills it for the new container — leaving our batch's entry refs nil.
-		-- Snapshot once at batch-start; deferred frames always see the stable list.
+		-- refills it for the new container - leaving our batch's entry refs nil.
+		-- Snapshot once at batch-start, deferred frames always see the stable list.
 		local snapshot = {}
 		for i = 1, count do
 			snapshot[i] = displayEntries[i]
@@ -900,7 +935,7 @@ end
 -- ---------------------------------------------------------------------------
 -- Shared grid geometry / masonry stacking
 --   These are window-agnostic so the backpack and every bank view share one
---   implementation of the cargBags layout instead of copy-pasting it.
+--   implementation of the layout instead of copy-pasting it.
 -- ---------------------------------------------------------------------------
 
 --- Pixel width of a `columns`-wide item grid including the panel insets. Used to
@@ -914,7 +949,7 @@ end
 
 --- Drop (or click-drop) the cursor item onto a category panel to assign it to
 --- that category (Modules/Organize). Panels are plain non-secure frames, so this
---- can't taint; the item returns to its slot via ClearCursor and the assignment
+--- can't taint, the item returns to its slot via ClearCursor and the assignment
 --- triggers a reclassify/redraw. Built-in panels work too (it pins the item
 --- there). The main "Bag" panel is excluded by StackCategories, so dropping
 --- there is a no-op - unassign via /bf cat remove.
@@ -959,7 +994,7 @@ local function EnableCategoryDrop(container)
 	container._dropSetup = true
 end
 
---- cargBags masonry: stack the category panels upward from the already-sized
+--- Masonry: stack the category panels upward from the already-sized
 --- main panel, wrapping into a new column to the left once a column holds
 --- `perColumn` panels. The main panel stays put at its anchor.
 ---
@@ -971,11 +1006,11 @@ end
 ---   gridWidth   - forced panel width (Container.GridWidth)
 ---   perColumn   - category panels per column before wrapping left (backpack default 6)
 ---   freeSlots   - optional map [name] = { count, getBags } giving a panel its own
----                 free-slot box; such panels render even when they hold no items
----   owner       - view/backpack instance; used with GetCategoryContainer
+---                 free-slot box, such panels render even when they hold no items
+---   owner       - view/backpack instance, used with GetCategoryContainer
 ---   active      - table marked active[name]=true for each drawn panel
 ---   dirtyCategories - when set, only panels in these categories run Layout()
----                     (others keep cached geometry; anchors still update)
+---                     (others keep cached geometry, anchors still update)
 function Container.StackCategories(opts)
 	local sections = opts.sections
 	local mainName = opts.mainName

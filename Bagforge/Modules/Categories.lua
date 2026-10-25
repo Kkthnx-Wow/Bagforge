@@ -2,18 +2,17 @@
 	Bagforge - Categories
 	-------------------------------------------------------------------------
 	Item classifier used by the backpack view to group items into sections.
-	This mirrors the filter set NDui ships for its cargBags layout (see NDui's
-	Modules/Bags/Filters.lua + Core.lua), adapted to our single-category-per-item
-	model. cargBags routes an item to the first container whose filter matches,
+	This groups items into a fixed filter set, adapted to our single-category-per-item
+	model. Each item routes to the first container whose filter matches,
 	so the *resolution order* below is the priority order (first match wins),
-	while `Categories.order` controls where each panel is drawn (NDui's Index).
+	while `Categories.order` controls where each panel is drawn.
 
 	Every specialty filter is individually toggleable through `ns.db.filters`
-	(NDui gates each behind a checkbox the same way), with a master `enable`
+, with a master `enable`
 	switch that collapses everything back into one bag when off.
 
 	Contract: Items.lua calls `Categories:GetCategory(entry)` while scanning. The
-	view never decides membership; it only renders what the data layer handed it.
+	view never decides membership, it only renders what the data layer handed it.
 --]]
 
 local _, ns = ...
@@ -51,19 +50,19 @@ local MISC_SUBCLASS = Enum.ItemMiscellaneousSubclass
 -- Bracket access dodges stale type-stub "undefined field" warnings on _G globals.
 local CURRENT_EXPANSION = _G["LE_EXPANSION_LEVEL_CURRENT"] or 11
 
--- Filter defaults. Mirrors NDui's GUI defaults (FilterJunk/Consumable/Equipment/
--- Collection/AOE/Decor on by default; Goods/Quest/EquipSet/Azerite/Anima/Stone/
+-- Filter defaults. Mirrors GUI defaults (FilterJunk/Consumable/Equipment/
+-- Collection/AOE/Decor on by default, Goods/Quest/EquipSet/Azerite/Anima/Stone/
 -- Legacy/Lower off), but we keep Goods (reagents) and Quest on to preserve
 -- Bagforge's existing buckets, and add our own "recent" bucket.
 ns:RegisterDefaults({
 	filters = {
-		enable = true, -- master switch (NDui ItemFilter)
+		enable = true, -- master switch
 		recent = true, -- Blizzard isNewItem flag
 		junk = true, -- poor quality
 		equipSet = true, -- member of an equipment set
-		warbound = true, -- Warbound Until Equipped (NDui FilterAOE)
+		warbound = true, -- Warbound Until Equipped
 		azerite = false, -- Azerite empowered armor
-		legendary = false, -- legendary-quality items (NDui FilterLegendary)
+		legendary = false, -- legendary-quality items
 		legacy = false, -- gear from a previous expansion
 		lowerLevel = false, -- gear below minItemLevel
 		minItemLevel = 1, -- threshold for the lowerLevel filter
@@ -75,20 +74,20 @@ ns:RegisterDefaults({
 		quest = true, -- quest items
 		anima = false, -- Shadowlands anima
 		decor = true, -- housing decor
-		petTrashExempt = true, -- grey pet-battle vendor currencies (NDui PetTrash)
+		petTrashExempt = true, -- grey pet-battle vendor currencies
 	},
 })
 
 -- ---------------------------------------------------------------------------
--- Category names + display order (lower = drawn first). Mirrors NDui's Index.
+-- Category names + display order (lower = drawn first). Mirrors Index.
 -- ---------------------------------------------------------------------------
 local CATEGORY_RECENT = L["Recent Items"]
 local CATEGORY_AZERITE = L["Azerite Armor"]
 local CATEGORY_EQUIPMENT = L["Equipment"]
 local CATEGORY_EQUIPSET = L["Equipment Sets"]
--- Blizzard's own localized string (NDui labels its AOE bag the same way).
+-- Blizzard's own localized string.
 local CATEGORY_WARBOUND = _G["ITEM_ACCOUNTBOUND_UNTIL_EQUIP"] or L["Warbound Until Equipped"]
--- Blizzard's own localized string (NDui labels its Legendary bag the same way).
+-- Blizzard's own localized string.
 local CATEGORY_LEGENDARY = _G["LOOT_JOURNAL_LEGENDARIES"] or L["Legendary"]
 local CATEGORY_COLLECTION = L["Collections"]
 local CATEGORY_DECOR = L["Housing Decor"]
@@ -103,7 +102,7 @@ local CATEGORY_LOWER = L["Lower Level"]
 local CATEGORY_JUNK = L["Junk"]
 local CATEGORY_OTHER = L["Other"]
 
--- Grey items used as pet-battle vendor currency (NDui petTrashCurrenies).
+-- Grey items used as pet-battle vendor currency.
 local PET_TRASH_ITEM_IDS = {
 	[3300] = true,
 	[3670] = true,
@@ -139,7 +138,7 @@ local ORDER = {
 	[CATEGORY_WARBOUND] = 10,
 	[CATEGORY_COLLECTION] = 11,
 	[CATEGORY_DECOR] = 12,
-	[CATEGORY_REAGENT_BAG] = 6, -- NDui puts the reagent bag right above the main bag
+	[CATEGORY_REAGENT_BAG] = 6, -- reagent bag sits right above the main bag
 	[CATEGORY_REAGENTS] = 13,
 	[CATEGORY_ANIMA] = 14,
 	[CATEGORY_STONE] = 15,
@@ -151,7 +150,7 @@ local ORDER = {
 	[CATEGORY_OTHER] = 100,
 }
 
--- Custom categories and saved search categories aren't in the ORDER table; draw
+-- Custom categories and saved search categories aren't in the ORDER table, draw
 -- them near the top (just above Recent Items at 5) unless the player pinned a
 -- specific order. Shared by GetSearchCategory and GetOrder.
 local CUSTOM_CATEGORY_ORDER = 4
@@ -160,7 +159,7 @@ local CUSTOM_CATEGORY_ORDER = 4
 -- Per-itemID property cache
 --   Toy/anima/decor/azerite/warbound status is intrinsic to an item type, so we
 --   resolve it once per unique itemID and reuse it across every rescan instead
---   of re-querying the API for the same stack every BAG_UPDATE. Session-scoped;
+--   of re-querying the API for the same stack every BAG_UPDATE. Session-scoped.
 --   the set of distinct items a player touches is small and bounded in practice.
 -- ---------------------------------------------------------------------------
 local propCache = {}
@@ -193,7 +192,7 @@ local function GetProps(itemID)
 		end
 	end
 
-	-- expacID for legacy/lower filters; only finalise once GetItemInfo returns.
+	-- expacID for legacy/lower filters, only finalise once GetItemInfo returns.
 	if p.expacID == nil then
 		local info = F.GetItemInfoRecord(itemID)
 		local expac = info and info.expansionID
@@ -224,7 +223,7 @@ local function IsGearClass(entry)
 	return classID == ITEM_CLASS.Weapon or classID == ITEM_CLASS.Armor
 end
 
--- NDui's CheckEquip: real gear above common quality (poor gear is junk first).
+-- CheckEquip: real gear above common quality (poor gear is junk first).
 local function IsUpgradeGear(entry)
 	local q = entry.quality
 	return IsGearClass(entry) and q ~= nil and q > ITEM_QUALITY.Common
@@ -296,7 +295,7 @@ local function IsWarbound(entry)
 	-- Fallback: ItemInfo wasn't active or item data wasn't cached at scan time.
 	-- Mirror ItemInfo:GetBindLabel's two-stage detection so the filter still works
 	-- when the module is unavailable. We cache the positive result on the entry so
-	-- repeated calls per draw are free; a ContinuableContainer rebuild will
+	-- repeated calls per draw are free, a ContinuableContainer rebuild will
 	-- overwrite with the same value once ItemInfo resolves it properly.
 	if entry.bag and entry.slot and C_TooltipInfo and C_TooltipInfo.GetBagItem and BIND then
 		local ok, data = pcall(C_TooltipInfo.GetBagItem, entry.bag, entry.slot)
@@ -337,7 +336,7 @@ local function IsAzerite(entry)
 	return p and p.azerite
 end
 
--- NDui's FilterLegendary: any legendary-quality item (orange).
+-- FilterLegendary: any legendary-quality item (orange).
 local function IsLegendary(entry)
 	local q = entry.quality
 	return q == ITEM_QUALITY.Legendary
@@ -379,7 +378,7 @@ local function IsLowerLevel(entry, threshold)
 end
 
 -- ---------------------------------------------------------------------------
--- Classification (first match wins == cargBags container resolution order)
+-- Classification (first match wins == container resolution order)
 -- ---------------------------------------------------------------------------
 --- A reagent bag is equipped when the reagent bag slot reports container slots.
 local function HasReagentBag()
@@ -390,7 +389,7 @@ local function IsAccountBankEntry(entry)
 	return C.IS_ACCOUNT_BANK_BAG and C.IS_ACCOUNT_BANK_BAG[entry.bag]
 end
 
---- The dedicated reagent-bag panel (cargBags style). Exposed so the backpack can
+--- The dedicated reagent-bag panel. Exposed so the backpack can
 --- force the panel to show (with its free-slot box) even when it's empty.
 function Categories:GetReagentBagCategory()
 	return CATEGORY_REAGENT_BAG
@@ -402,7 +401,7 @@ end
 
 -- Custom user assignment (Modules/Organize): an explicit itemID -> name map the
 -- player controls. Checked before every built-in rule (and independent of the
--- filter master switch) so an assignment is absolute - BetterBags' behaviour.
+-- filter master switch) so an assignment is absolute - behaviour.
 local function GetCustomCategory(entry)
 	local o = ns.db and ns.db.organize
 	if not (o and o.customEnable) then
@@ -420,7 +419,7 @@ end
 -- before any built-in filter, and independent of the filter master switch - same
 -- standing as custom categories. Among multiple matching searches the lowest
 -- draw order wins (name breaks ties) so priority is predictable.
--- Saved-search winner cache (Baganator CategoryFilter pattern): per stable item
+-- Saved-search winner cache: per stable item
 -- key, remember which search won so duplicate stacks don't re-run every query.
 -- Cleared when saved searches change (Search.Invalidate -> InvalidateSearchCache).
 local searchWinnerCache = {}
@@ -449,7 +448,7 @@ function Categories:InvalidateItemProps(itemID)
 	if itemID then
 		propCache[itemID] = nil
 	end
-	-- Winner/reject keys are usually hyperlinks, not id:N — wipe both so late
+	-- Winner/reject keys are usually hyperlinks, not id:N - wipe both so late
 	-- GET_ITEM_INFO_RECEIVED can re-match saved searches after name/type loads.
 	wipe(searchWinnerCache)
 	wipe(searchRejectCache)
@@ -611,7 +610,7 @@ function Categories:GetCategory(entry)
 		return CATEGORY_OTHER
 	end
 
-	-- NDui's account/warband bank uses a smaller filter set than bags/character
+	-- account/warband bank uses a smaller filter set than bags/character
 	-- bank: AccountEquipment, AccountConsumable, AccountGoods, AccountAOE, and
 	-- AccountLegacy only. Notably, there is no AccountQuest filter.
 	if IsAccountBankEntry(entry) then
@@ -672,8 +671,8 @@ function Categories:GetCategory(entry)
 	if f.consumables and IsConsumable(entry) then
 		return CATEGORY_CONSUMABLES
 	end
-	-- Reagent bag (cargBags): when one is equipped, trade goods (and anything
-	-- physically in the reagent bag) collect in their own panel; otherwise trade
+	-- Reagent bag: when one is equipped, trade goods (and anything
+	-- physically in the reagent bag) collect in their own panel, otherwise trade
 	-- goods fall back to the by-type Reagents bucket.
 	if f.reagents and HasReagentBag() and (entry.bag == REAGENT_BAG_INDEX or IsTradeGood(entry)) then
 		return CATEGORY_REAGENT_BAG
@@ -709,7 +708,7 @@ function Categories:GetOrder(category)
 		return builtin
 	end
 
-	-- Saved search categories carry their own order; their group-by sub-panels
+	-- Saved search categories carry their own order, their group-by sub-panels
 	-- ("<search>: <suffix>") inherit it so they cluster with their parent.
 	if o and o.searches then
 		local def = o.searches[category]
@@ -736,7 +735,7 @@ function Categories:GetOrder(category)
 	return CUSTOM_CATEGORY_ORDER
 end
 
---- The main "Bag" panel (cargBags/NDui) holds everything that didn't land in
+--- The main "Bag" panel holds everything that didn't land in
 --- a specialty filter. In our classifier that's the Other bucket.
 function Categories:GetMainCategory()
 	return CATEGORY_OTHER
@@ -789,7 +788,7 @@ function Categories:HandleCommand(arg)
 		return
 	end
 
-	-- Filter names/values are all lowercase; the slash dispatcher now preserves
+	-- Filter names/values are all lowercase, the slash dispatcher now preserves
 	-- case for other commands, so normalise here.
 	local key, value = (arg or ""):lower():match("^(%S*)%s*(.*)$")
 
@@ -868,7 +867,7 @@ function Categories:OnDisable()
 end
 
 -- ---------------------------------------------------------------------------
--- Settings panel (each filter is a live checkbox; rebuild on change)
+-- Settings panel (each filter is a live checkbox, rebuild on change)
 -- ---------------------------------------------------------------------------
 --- Re-classify and redraw whenever any filter toggle changes.
 function Categories:OnSettingChanged()
@@ -887,7 +886,7 @@ function Categories:RegisterOptions(category, builder)
 
 	Filter("recent", L["Recent Items"], L["Group items flagged as newly looted."])
 	Filter("junk", L["Junk"], L["Group poor-quality (grey) items."])
-	Filter("petTrashExempt", L["Pet Trash Currencies"], L["Keep grey pet-battle vendor items out of Junk and auto-sell; group them under Collections instead."])
+	Filter("petTrashExempt", L["Pet Trash Currencies"], L["Keep grey pet-battle vendor items out of Junk and auto-sell, group them under Collections instead."])
 	Filter("equipSet", L["Equipment Sets"], L["Group items that belong to an equipment set."])
 	Filter("warbound", L["Warbound Until Equipped"], L["Group account-bound-until-equipped items."])
 	Filter("azerite", L["Azerite Armor"], L["Group Azerite-empowered armor."])

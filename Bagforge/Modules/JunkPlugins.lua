@@ -2,7 +2,7 @@
 	Bagforge - Junk plugin bridges
 	-------------------------------------------------------------------------
 	Auto-registers popular junk addons through Bagforge.API:RegisterJunkDetector
-	(mirrors Baganator/API/Junk.lua). Junk coin overlays refresh when the
+	Junk coin overlays refresh when the
 	third-party list changes.
 --]]
 
@@ -161,7 +161,7 @@ function JunkPlugins:OnEnable()
 				return false
 			end,
 		})
-		-- hooksecurefunc cannot be undone; one-shot so re-enable doesn't stack.
+		-- hooksecurefunc cannot be undone, one-shot so re-enable doesn't stack.
 		if SellJunk.Add then
 			hooksecurefunc(SellJunk, "Add", RefreshButtons)
 		end

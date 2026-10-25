@@ -7,16 +7,16 @@
 	  * Custom categories - the player assigns an itemID to a named category.
 	    Stored as a flat itemID -> name map for O(1) lookup at classify time
 	    (Categories.GetCategory checks it before any built-in rule). Mirrors
-	    BetterBags' customCategoryIndex.
+	    customCategoryIndex.
 	  * Pinned ordering    - an order override for ANY category (built-in or
 	    custom). Categories.GetOrder consults it first.
 	  * Stack merging      - a toggle the scanner reads to collapse identical
 	    stacks into one button (see Core/Scan.lua _MergeStacks).
-	  * Custom junk        - an account-wide itemID set the player marks as junk;
+	  * Custom junk        - an account-wide itemID set the player marks as junk.
 	    grouped into the Junk panel (Categories.IsJunk) and optionally sold by
-	    the merchant automation (Vendor.lua), exactly like NDui's CustomJunkList.
+	    the merchant automation (Vendor.lua), exactly like CustomJunkList.
 
-	Two click "modes" (NDui's SelectToggleButton style, mutually exclusive): an
+	Two click "modes": an
 	"assign" mode opens the category menu on a clicked item, a "junk" mode toggles
 	the clicked item in/out of the junk list. Arming one disarms the other.
 
@@ -62,7 +62,7 @@ ns:RegisterDefaults({
 	},
 })
 ns:RegisterDefaults({
-	customJunk = {}, -- [itemID] = true (account-wide; matches NDuiADB CustomJunkList)
+	customJunk = {}, -- [itemID] = true (account-wide custom junk list)
 }, "global")
 
 local Organize = ns:NewModule("Organize", "organize")
@@ -85,7 +85,7 @@ function Organize:OnInitialize()
 	local o = DB()
 	local junk = JunkDB()
 	-- Early builds briefly stored custom junk in the profile table. Move those
-	-- entries into the account-wide table so custom junk behaves like NDui and is
+	-- entries into the account-wide table so custom junk stays account-wide and is
 	-- available on every character/profile without losing anything already marked.
 	if o and o.junk and junk then
 		for itemID, enabled in pairs(o.junk) do
@@ -97,7 +97,7 @@ function Organize:OnInitialize()
 	end
 
 	-- Prime the scanner's within-category sort from the saved choice before the
-	-- first scan (swaps a comparator pointer; no per-compare setting lookup).
+	-- first scan (swaps a comparator pointer, no per-compare setting lookup).
 	if o and ns.Scan and ns.Scan.SetSortMode then
 		ns.Scan.SetSortMode(o.itemSort)
 	end
@@ -178,9 +178,9 @@ function Organize:UnassignItem(itemID)
 end
 
 -- ---------------------------------------------------------------------------
--- Saved search categories (BetterBags-style query rules)
+-- Saved search categories
 --   Stored as ns.db.organize.searches[name] = { query, order, groupBy, enabled }.
---   The classifier (Categories.GetSearchCategory) reads them; this module owns
+--   The classifier (Categories.GetSearchCategory) reads them, this module owns
 --   creation/editing. Any change drops the compiled-query cache and rescans.
 -- ---------------------------------------------------------------------------
 local function CleanName(name)
@@ -199,7 +199,7 @@ local function InvalidateSearchAndReclassify()
 	ns:ReclassifyBags()
 end
 
---- Create or update a saved search. `opts` may carry order/groupBy/enabled;
+--- Create or update a saved search. `opts` may carry order/groupBy/enabled.
 --- omitted fields keep their previous (or default) value. Returns true on save.
 function Organize:SetSearch(name, query, opts)
 	local o = DB()
@@ -256,7 +256,7 @@ end
 -- ---------------------------------------------------------------------------
 -- Per-category header colour (custom + search panels)
 -- ---------------------------------------------------------------------------
---- Tint a category panel's header. Display-only, so repaint (no rescan); the
+--- Tint a category panel's header. Display-only, so repaint (no rescan), the
 --- draw epoch bump in RefreshBags(false) forces panels to relayout their header.
 function Organize:SetColor(name, r, g, b)
 	local o = DB()
@@ -323,7 +323,7 @@ end
 -- instead of the old integer 1..n scale that clobbered built-in defaults and the
 -- manager's custom band. The two reorder systems now share one ns.db.organize.order
 -- scale and compose as "last action wins" with nothing stranded. Lower order draws
--- first (nearer the main bag panel); EPS only matters when neighbours are tied.
+-- first (nearer the main bag panel), EPS only matters when neighbours are tied.
 local ORDER_EPS = 0.001
 
 local function CategoryEntries(owner, categoryName)
@@ -736,9 +736,9 @@ function Organize:OpenManager()
 end
 
 -- ---------------------------------------------------------------------------
--- Sort slot locks (Ctrl+right-click on an item; Blizzard bag sort may still move)
--- Keys are bag:slot by design — after sort/deposit a different item in that
--- slot inherits the lock. Transfers honour IsSortLocked; re-keying by GUID
+-- Sort slot locks (Ctrl+right-click on an item, Blizzard bag sort may still move)
+-- Keys are bag:slot by design - after sort/deposit a different item in that
+-- slot inherits the lock. Transfers honour IsSortLocked, re-keying by GUID
 -- would fight Blizzard's own sort-ignore flags.
 -- ---------------------------------------------------------------------------
 function Organize:SortLockKey(bag, slot)
@@ -910,7 +910,7 @@ function Organize:ImportCategories(json)
 		categories:InvalidateSearchCache()
 	end
 	-- Write order pins into DB before the rebuild so the scan sees them.
-	-- Reclassify can be frame-budgeted; a sync RefreshBags(false) after it used
+	-- Reclassify can be frame-budgeted, a sync RefreshBags(false) after it used
 	-- to paint before categories finished. Full rescan waits on the model.
 	if type(data.managedOrder) == "table" and #data.managedOrder > 0 then
 		local remapped = {}
@@ -935,7 +935,7 @@ function Organize:ImportCategories(json)
 end
 
 -- ---------------------------------------------------------------------------
--- Click modes (NDui's SelectToggleButton: mutually-exclusive toolbar toggles)
+-- Click modes
 --   "assign" - left-click an item to open its category menu
 --   "junk"   - left-click an item to toggle it in/out of the junk list
 -- ---------------------------------------------------------------------------
@@ -952,7 +952,7 @@ local function EnsureModeGlow(button)
 end
 
 --- Switch to `mode` (or nil to disarm). The armed toggle gets the bags-newitem
---- glow (and a locked highlight); every other registered toggle is cleared, so
+--- glow (and a locked highlight), every other registered toggle is cleared, so
 --- only one mode is ever active at a time.
 function Organize:SetMode(mode)
 	self.mode = mode
@@ -1043,7 +1043,7 @@ function Organize:OpenAssignMenu(ownerButton, entry)
 end
 
 -- ---------------------------------------------------------------------------
--- Custom junk (NDui CustomJunkList): mark items as junk to group + auto-sell
+-- Custom junk: mark items as junk to group + auto-sell
 -- ---------------------------------------------------------------------------
 --- Vendor sell price of an itemID (cached via Scan).
 local function SellPrice(itemID)
@@ -1054,7 +1054,7 @@ local function SellPrice(itemID)
 end
 
 --- Toggle whether `itemID` is treated as junk. Only items with a vendor price
---- qualify (selling worthless items is pointless, and it matches NDui).
+--- qualify (selling worthless items is pointless).
 function Organize:SetJunk(itemID, junked)
 	local junk = JunkDB()
 	if not (junk and itemID) then
@@ -1431,7 +1431,7 @@ function Organize:RegisterOptions(category, builder)
 	builder:Dropdown(category, self, "itemSort", L["Item Sort"], L["How items are ordered inside each category panel."], sortChoices)
 
 	builder:Header(L["Category Manager"])
-	-- Empty left label: Blizzard's button row is the control; the header above
+	-- Empty left label: Blizzard's button row is the control, the header above
 	-- already names the section (same pattern as Edit Mode / Cooldown Manager).
 	builder:Button("", L["Open"], function()
 		self:OpenManager()
@@ -1473,7 +1473,7 @@ if StaticPopupDialogs then
 		hideOnEscape = 1,
 	}
 
-	-- Confirm before wiping the whole custom junk list (NDui's wipe popup).
+	-- Confirm before wiping the whole custom junk list.
 	StaticPopupDialogs["BAGFORGE_WIPE_JUNK"] = {
 		text = L["Wipe the entire custom junk list?"],
 		button1 = _G["YES"] or "Yes",

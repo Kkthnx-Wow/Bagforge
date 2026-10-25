@@ -1,9 +1,9 @@
 --[[
 	Bagforge - Backpack (the window)
 	-------------------------------------------------------------------------
-	cargBags/NDui layout: the main "Bag" panel is the draggable root frame;
+	Layout: the main "Bag" panel is the draggable root frame.
 	category panels stack upward in a masonry flow. Shared chrome/draw plumbing
-	lives in ContainerWindow; bag-bar and Blizzard suppression are mixed in from
+	lives in ContainerWindow, bag-bar and Blizzard suppression are mixed in from
 	BagBar and BlizzardBags.
 --]]
 
@@ -46,7 +46,7 @@ local TOKEN_UI = "Blizzard_TokenUI"
 local REAGENT_BAG_BAGS = BagIndex.ReagentBag and { BagIndex.ReagentBag } or nil
 
 -- Currency cluster spacing (see currencies:UpdateTokenAnchoring). ICON_INSET is
--- the count->icon gap; token height matches SmallMoneyFrameTemplate (13px).
+-- the count->icon gap, token height matches SmallMoneyFrameTemplate (13px).
 local CURRENCY_TOKEN_HEIGHT = 13
 local CURRENCY_TOKEN_FONT_DELTA = 1
 local CURRENCY_TOKEN_ICON_INSET = 9
@@ -54,7 +54,7 @@ local CURRENCY_TOKEN_GAP = 18
 local CURRENCY_BAR_PAD_LEFT = 0
 local CURRENCY_BAR_PAD_RIGHT = 0
 
--- Character-create arrow textures (same family KkthnxUI-style toolbar toggle).
+-- Character-create arrow textures (toolbar toggle).
 local TEXTURE_TOOLBAR_EXPAND = "Interface\\BUTTONS\\UI-SpellbookIcon-NextPage-Up"
 local TEXTURE_TOOLBAR_EXPAND_DOWN = "Interface\\BUTTONS\\UI-SpellbookIcon-NextPage-Down"
 local TEXTURE_TOOLBAR_COLLAPSE = "Interface\\BUTTONS\\UI-SpellbookIcon-PrevPage-Up"
@@ -99,7 +99,7 @@ ns:RegisterDefaults({
 		flashFind = true,
 		showJunkPrice = true,
 		toolbarExpanded = false,
-		-- Auto-open matrix (Baganator OpenClose.lua + PLAYER_INTERACTION_MANAGER).
+		-- Auto-open matrix.
 		openOnTrade = false,
 		openOnMerchant = false,
 		openOnMail = false,
@@ -194,8 +194,8 @@ function Backpack:BuildChrome()
 	bagToggle:SetScript("OnLeave", GameTooltip_Hide)
 	self.bagToggleButton = bagToggle
 
-	-- Custom-category assign mode (NDui's Favourite-mode button): arm it, then
-	-- left-click items to pick their category. Uses the favorites star atlas; the
+	-- Custom-category assign mode: arm it, then
+	-- left-click items to pick their category. Uses the favorites star atlas, the
 	-- locked highlight is the "armed" cue.
 	local assign = F.CreateIconButton(frame, btnW, btnW, "Interface\\AddOns\\Bagforge\\assets\\FavoritesIcon")
 	assign:SetPoint("RIGHT", bagToggle, "LEFT", -btnGap, 0)
@@ -222,7 +222,7 @@ function Backpack:BuildChrome()
 	end)
 	self.assignButton = assign
 
-	-- Custom-junk mode (NDui's CustomJunkMode button): arm it, then left-click
+	-- Custom-junk mode: arm it, then left-click
 	-- items to flag them as junk (grouped + auto-sold). Alt+Ctrl wipes the list.
 	-- "bags-junkcoin" is the same coin atlas the in-bag junk overlay uses, so the
 	-- button and the marks it produces read as one feature. (Atlas, not a path:
@@ -260,7 +260,7 @@ function Backpack:BuildChrome()
 	end)
 	self.junkButton = junk
 
-	-- Delete mode mirrors NDui/cargBags: arm it, then Ctrl+Alt left-click a
+	-- Delete mode: arm it, then Ctrl+Alt left-click a
 	-- non-rare item to destroy it without Blizzard's delete confirmation box.
 	local delete = F.CreateIconButton(frame, btnW, btnW, "Interface\\AddOns\\Bagforge\\assets\\DeleteModeIcon")
 	delete:SetPoint("RIGHT", junk, "LEFT", -btnGap, 0)
@@ -292,10 +292,10 @@ function Backpack:BuildChrome()
 
 	-- One-shot "delete cheapest" action (NexEnhance's goblin-head button): find
 	-- and (after a confirm showing the item) destroy the lowest vendor-value
-	-- item in the bags. Left-click prompts; right-click previews in chat. The
+	-- item in the bags. Left-click prompts, right-click previews in chat. The
 	-- scan, confirm dialog and protection filters live in the DeleteCheapest
-	-- module; this is just the chrome icon. The dead-goblin-head icon reads as
-	-- "purge the hoard"; trim the icon ring so it sits like the other flat
+	-- module, this is just the chrome icon. The dead-goblin-head icon reads as
+	-- "purge the hoard", trim the icon ring so it sits like the other flat
 	-- chrome icons.
 	local deleteCheapest = F.CreateIconButton(frame, btnW, btnW, 901746)
 	deleteCheapest:SetPoint("RIGHT", delete, "LEFT", -btnGap, 0)
@@ -400,7 +400,7 @@ function Backpack:BuildChrome()
 	self:BuildBagBar()
 end
 
---- The backpack's item icon size (per-view; falls back to the shared default).
+--- The backpack's item icon size (per-view, falls back to the shared default).
 function Backpack:GetIconSize()
 	return (ns.db and ns.db.backpack and ns.db.backpack.iconSize) or C.Layout.ITEM_SIZE
 end
@@ -468,7 +468,7 @@ function Backpack:UpdateDeleteCheapestButton()
 	self:UpdateToolbarChrome()
 end
 
--- SmallMoneyFrame coin buttons already support pick-up; F.DecoratePickupMoneyFrame
+-- SmallMoneyFrame coin buttons already support pick-up, F.DecoratePickupMoneyFrame
 -- adds the hover glow and tooltip (see Functions.lua).
 function Backpack:DecorateMoneyFrame(money)
 	F.DecoratePickupMoneyFrame(money, "ANCHOR_LEFT")
@@ -508,7 +508,7 @@ function Backpack:UpdateCurrencyBar(gridWidth)
 		return false
 	end
 
-	-- CURRENCY_DISPLAY_UPDATE fires this with no width; recompute it from the
+	-- CURRENCY_DISPLAY_UPDATE fires this with no width, recompute it from the
 	-- column count (the same source Draw uses) so we never do arithmetic on nil.
 	gridWidth = gridWidth or ns.Container.GridWidth(ns.db.backpack.columns or C.Layout.COLUMNS, self:GetIconSize())
 
@@ -531,7 +531,7 @@ function Backpack:UpdateCurrencyBar(gridWidth)
 		maxWidth = 1
 	end
 
-	-- Wide enough for Blizzard's token layout pass; reclamped to content after.
+	-- Wide enough for Blizzard's token layout pass, reclamped to content after.
 	bar:SetWidth(maxWidth)
 	bar:Update()
 	if bar.Border then
@@ -777,7 +777,7 @@ function Backpack:Open(fromAuto)
 		return
 	end
 	-- Manual open (keybind / bag button) clears autoOpened so interaction HIDE
-	-- won't close bags the player opened on purpose (Baganator OpenClose.lua).
+	-- won't close bags the player opened on purpose.
 	if not fromAuto then
 		self._autoOpened = false
 	end
@@ -790,14 +790,14 @@ function Backpack:Open(fromAuto)
 	end
 	local items = ns:GetModule("Items")
 	-- Fresh login: bags often open while `_scanDirty` (updates while closed) or
-	-- before the first model build. Scan() is sync; Draw() must run here — not
+	-- before the first model build. Scan() is sync, Draw() must run here - not
 	-- wait on debounced Items.Updated (that left a 0x0 frame with only sound).
-	-- Empty bags still have `_hasScanned`; do not treat #slots==0 as "never scanned".
+	-- Empty bags still have `_hasScanned`, do not treat #slots==0 as "never scanned".
 	local needScan = items and (items._scanDirty or not items._hasScanned)
 	if needScan then
 		items:Scan()
 	elseif items and items.scanner and items.scanner.RefreshFiltered then
-		-- Search may have changed while closed; sync isFiltered before paint.
+		-- Search may have changed while closed, sync isFiltered before paint.
 		items.scanner:RefreshFiltered()
 	end
 	self:UpdateMoneyFrame()
@@ -897,7 +897,7 @@ function Backpack:RegisterOptions(category, builder)
 	builder:Slider(category, self, "iconSize", ns.L["Icon Size"], ns.L["Width and height of each item button, in pixels. The window resizes to fit."], C.Layout.MIN_ICON_SIZE, C.Layout.MAX_ICON_SIZE, 1)
 	-- No "Bag Bar" checkbox here: the bag window's own bag-icon button toggles it
 	-- (ToggleBagBar), so a settings duplicate was redundant and popped the window
-	-- on change. showBagBar still persists; the in-bag toggle drives it.
+	-- on change. showBagBar still persists, the in-bag toggle drives it.
 	builder:Checkbox(category, self, "specialBagColors", ns.L["Specialty Bag Colors"], ns.L["Tint equipped specialty bag slots on the bag bar."])
 	builder:Header(ns.L["Auto-Open Bags"])
 	builder:Checkbox(category, self, "openOnTrade", ns.L["Open on Trade"], ns.L["Open your bags when a trade window appears."])
@@ -991,7 +991,7 @@ function Backpack:OnEnable()
 		Backpack:SetupKeybinds()
 	end)
 
-	-- Baganator OpenClose.lua: open on SHOW; close on HIDE only if we auto-opened
+	-- Auto-open/close: open on SHOW, close on HIDE only if we auto-opened
 	-- (manual open stays open when the merchant/mail/etc. window closes).
 	local IT = Enum.PlayerInteractionType
 	local openOnByType = {
@@ -1013,7 +1013,7 @@ function Backpack:OnEnable()
 		if not InteractionOptionEnabled(interactionType) then
 			return
 		end
-		-- Already open from a keybind — don't claim ownership.
+		-- Already open from a keybind - don't claim ownership.
 		if Backpack:IsShown() and not Backpack._autoOpened then
 			return
 		end

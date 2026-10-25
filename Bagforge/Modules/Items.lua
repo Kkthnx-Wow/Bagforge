@@ -47,7 +47,7 @@ function Items:Scan(dirtyBags, dirtySlotKeys)
 end
 
 --- Lighter refresh after Blizzard bag sort: reuse cached item metadata when
---- possible; categories are always re-evaluated from live slot fields.
+--- possible, categories are always re-evaluated from live slot fields.
 function Items:ScanAfterSort()
 	self._scanDirty = false
 	self._hasScanned = true
@@ -150,7 +150,7 @@ local function FlushBackpackRefresh(dirtyBackpackBags)
 end
 
 --- Hand the sorting off to Blizzard's own bag sort. Physical CombineStacks
---- first (Baganator CombineStacksAndSort) so partial piles merge before SortBags.
+--- first so partial piles merge before SortBags.
 function Items:Sort()
 	if InCombatLockdown() then
 		F.Print(L["Can't sort bags during combat."])
@@ -172,7 +172,7 @@ function Items:Sort()
 	MarkAllBackpackBagsDirty(Items._dirtyBackpackBags)
 
 	local function DoBlizzardSort()
-		-- Combine may take longer than the initial flush window; re-arm so
+		-- Combine may take longer than the initial flush window, re-arm so
 		-- BAG_UPDATE during SortBags stays gated until the burst settles.
 		ns:ScheduleBagSortFlush("backpack", function()
 			FlushBackpackRefresh(Items._dirtyBackpackBags)
@@ -212,7 +212,7 @@ end
 --- coordinator so the Pawn/ItemInfo/Categories modules don't each re-roll the
 --- "redraw backpack + nudge the bank" snippet (and don't hold a hard reference
 --- to the Bank module - it subscribes to the "Bank.Refresh" signal instead).
----   rescan = true  : full scanner:Run() — only when membership/structure cannot
+---   rescan = true  : full scanner:Run() - only when membership/structure cannot
 ---                    be patched (finalize fallback, stack-merge disable, login,
 ---                    BAG_CONTAINER_UPDATE, GET_ITEM_INFO finalize).
 ---   rescan = false : display-only (header colours, counts, overlay epoch bump).
@@ -242,7 +242,7 @@ local function FinishScannerRefresh(items, bank, backpackChanged, backpackFinali
 	end
 
 	if not (items and items.AnyWindowOpen and items:AnyWindowOpen()) then
-		-- Model mutated while closed — next Open must rescan/redraw from truth.
+		-- Model mutated while closed - next Open must rescan/redraw from truth.
 		if (backpackChanged or bankChanged) and items and items.MarkScanDirty then
 			items:MarkScanDirty()
 		end
@@ -260,8 +260,8 @@ end
 
 --- Reclassify existing scan data after a filter/plugin toggle. Falls back to a
 --- full rescan only when section lists cannot be patched in place.
---- refreshFn(scanner[, onComplete]) → changed, needsFinalize[, pending].
---- Budgeted RefreshCategories may return pending=true and call onComplete later;
+--- refreshFn(scanner[, onComplete]) -> changed, needsFinalize[, pending].
+--- Budgeted RefreshCategories may return pending=true and call onComplete later.
 --- we wait for backpack + bank before drawing so neither side is dropped.
 function ns:ApplyScannerRefresh(refreshFn)
 	local items = ns:GetModule("Items")
@@ -431,13 +431,13 @@ function Items:OnEnable()
 		refresh()
 	end
 
-	-- BAG_UPDATE_DELAYED owns backpack flush; Recent GUID walk runs inside Items:Scan.
+	-- BAG_UPDATE_DELAYED owns backpack flush, Recent GUID walk runs inside Items:Scan.
 	ns:TrackEvent(handles, "BAG_UPDATE_DELAYED", refresh)
 	ns:TrackEvent(handles, "BAG_CONTAINER_UPDATE", queueFullBackpackRefresh)
-	-- Events.lua: EQUIPMENT_SETS_CHANGED — BetterBags wipes + full refresh; our
+	-- Events.lua: EQUIPMENT_SETS_CHANGED - a full wipe + refresh is the simple option, our
 	-- equip-set category keys off GetContainerItemEquipmentSetInfo.
 	ns:TrackEvent(handles, "EQUIPMENT_SETS_CHANGED", queueFullBackpackRefresh)
-	-- Initial model build is Items:Scan() at end of OnEnable; PLAYER_LOGIN would
+	-- Initial model build is Items:Scan() at end of OnEnable, PLAYER_LOGIN would
 	-- double-scan on every login (Enable already runs from PLAYER_LOGIN).
 	ns:TrackEvent(handles, "PLAYER_REGEN_ENABLED", function()
 		if not Items._pendingCombatRefresh then
@@ -452,7 +452,7 @@ function Items:OnEnable()
 	-- the current slots in place and fire "Items.Updated" WITHOUT bumping the draw
 	-- epoch, so only the panels whose filter state actually moved repaint (their
 	-- per-section signature folds in isFiltered) while the rest are skipped.
-	-- Events.lua: INVENTORY_SEARCH_UPDATE — Blizzard bag search (BagSearchBox).
+	-- Events.lua: INVENTORY_SEARCH_UPDATE - Blizzard bag search (BagSearchBox).
 	-- Keep the model in sync even while closed so Open() paints correct dim/hide.
 	local refreshSearch = F.DebounceNoArgs(0.05, function()
 		if not scanner:RefreshFiltered() then
@@ -487,7 +487,7 @@ function Items:OnEnable()
 		end
 
 		-- ITEM_LOCK_CHANGED is hot while dragging/splitting stacks. Keep it in the
-		-- NDui/cargBags style: update the one visible slot instead of bumping the
+		-- update the one visible slot instead of bumping the
 		-- global draw epoch and repainting every open panel.
 		if not (bag and slot) then
 			refreshDisplay()
@@ -525,12 +525,12 @@ function Items:OnEnable()
 	end)
 	ns:TrackEvent(handles, "QUEST_LOG_UPDATE", refreshQuest)
 
-	-- Events.lua: PLAYER_ENTERING_WORLD — every load screen, not login-only.
+	-- Events.lua: PLAYER_ENTERING_WORLD - every load screen, not login-only.
 	ns:TrackEvent(handles, "PLAYER_ENTERING_WORLD", function()
 		if ns.Scan and ns.Scan.ClearItemCaches then
 			ns.Scan.ClearItemCaches()
 		end
-		-- Cached ilvl/bind/name may be stale after zone/instance; dirty so next
+		-- Cached ilvl/bind/name may be stale after zone/instance, dirty so next
 		-- open rebuilds instead of painting from wiped cache leftovers.
 		Items:MarkScanDirty()
 	end)
@@ -538,10 +538,10 @@ function Items:OnEnable()
 	-- On Midnight the scanner awaits late item data itself (ContinuableContainer),
 	-- but GET_ITEM_INFO_RECEIVED still lets us refresh ilvl/name/bind on visible
 	-- slots without a full rescan when item data arrives after the first build.
-	-- BAG_UPDATE_DELAYED is debounced (WoWUIBugs #650 — early BAG_UPDATE can fire
-	-- before ItemLocation is valid; delayed + ContinuableContainer covers that).
+	-- BAG_UPDATE_DELAYED is debounced (WoWUIBugs #650 - early BAG_UPDATE can fire
+	-- before ItemLocation is valid, delayed + ContinuableContainer covers that).
 	local pendingItemIDs = {}
-	-- Events.lua: GET_ITEM_INFO_RECEIVED — late item cache after ContinuableContainer.
+	-- Events.lua: GET_ITEM_INFO_RECEIVED - late item cache after ContinuableContainer.
 	local flushItemInfo = F.DebounceNoArgs(0.05, function()
 		if not Items:AnyWindowOpen() then
 			-- Don't drop IDs silently: mark dirty so Open rescans with full data.

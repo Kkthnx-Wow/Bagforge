@@ -2,8 +2,8 @@
 	Bagforge - Tooltip guards
 	-------------------------------------------------------------------------
 	Blizzard's default sell-price tooltip line routes through MoneyFrame.
-	BagBrother/Bagnon replace that line with plain GetMoneyString text via TooltipDataProcessor.
-	(WoWUIBugs #838 — MoneyFrame still used in default tooltip sell-price path.)
+	Some money-tooltip addons replace that line with plain GetMoneyString text via TooltipDataProcessor.
+	(WoWUIBugs #838 - MoneyFrame still used in default tooltip sell-price path.)
 --]]
 
 local format = string.format

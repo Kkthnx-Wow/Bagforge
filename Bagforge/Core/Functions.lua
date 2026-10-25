@@ -63,7 +63,7 @@ function F.Colorize(text, color)
 end
 
 -- ---------------------------------------------------------------------------
--- Tooltip click hints (Blizzard-style "<[icon] Left-Click> to …" lines)
+-- Tooltip click hints (Blizzard-style "<[icon] Left-Click> to ..." lines)
 -- ---------------------------------------------------------------------------
 
 local CreateAtlasMarkup = _G["CreateAtlasMarkup"]
@@ -87,7 +87,7 @@ function F.FormatClickToken(button)
 	return CLICK_BRACKET .. "<" .. token .. ">" .. CLICK_BRACKET_END
 end
 
---- Full hint line; `formatKey` is an L["%s to …"] locale key.
+--- Full hint line, `formatKey` is an L["%s to ..."] locale key.
 function F.FormatClickHint(button, formatKey)
 	return format(ns.L[formatKey], F.FormatClickToken(button))
 end
@@ -194,7 +194,7 @@ function F.FormatMoney(copper)
 	return format("%d%s", copperRem, copperIcon)
 end
 
--- Frame budget for hot UI paths (Baganator CheckTimeout ~100ms).
+-- Frame budget for hot UI paths.
 local frameBudgetStart
 
 function F.ReportFrameBudget()
@@ -222,7 +222,7 @@ function F.SlotIndex(key)
 	return (key or 0) % 1000
 end
 
---- WoW frame levels must stay in [0, 65535]; negative parents are valid.
+--- WoW frame levels must stay in [0, 65535], negative parents are valid.
 function F.ClampFrameLevel(level)
 	if not level or level < 0 then
 		return 0
@@ -266,7 +266,7 @@ end
 -- Bounded memo cache: store `value` under `key`, wiping the whole table once it
 -- grows past `limit` (default 600). A session-long cache keyed by something
 -- open-ended (item *links*, which vary by enchant/bonus IDs) can otherwise creep
--- forever; this caps it cheaply without per-entry LRU bookkeeping. The live
+-- forever, this caps it cheaply without per-entry LRU bookkeeping. The live
 -- count rides on a non-key sentinel field so it never collides with real keys.
 -- Adapted from NexEnhance's F.CacheSet.
 local CACHE_COUNT = {}
@@ -307,7 +307,7 @@ function F.Debounce(delay, func)
 end
 
 --- Debounce with no per-call args table (for zero-argument refresh handlers).
---- Leading-edge: first call in a burst schedules one run; calls during the window
+--- Leading-edge: first call in a burst schedules one run, calls during the window
 --- are dropped (not reset). Prefer DebounceTrailingNoArgs for bag refresh storms.
 function F.DebounceNoArgs(delay, func)
 	local scheduled = false
@@ -323,7 +323,7 @@ function F.DebounceNoArgs(delay, func)
 	end
 end
 
---- Trailing debounce (BetterBags-style): each call resets the timer so `func`
+--- Trailing debounce: each call resets the timer so `func`
 --- runs once after `delay` seconds of quiet. Use for BAG_UPDATE / sort flush.
 function F.DebounceTrailingNoArgs(delay, func)
 	local timer
@@ -342,7 +342,7 @@ local bucketTimers = {}
 local bucketArgs = {}
 local bucketArgCount = 0
 
---- Bucket rapid-fire events (BetterBags-style): each fire resets the timer;
+--- Bucket rapid-fire events: each fire resets the timer.
 --- `handler` runs once after `delay` seconds of quiet. Registers on the
 --- shared ns event frame.
 --- Returns the registered callback so callers can UnregisterEvent on teardown.
@@ -372,7 +372,7 @@ end
 -- Tooltip hover throttle
 --   Rapid cursor movement across hundreds of bank slots must not call
 --   GameTooltip:Hide / mixin OnLeave / C_Timer.NewTimer per crossing. One shared
---   OnUpdate polls the hover target; Blizzard cleanup runs only after a tooltip
+--   OnUpdate polls the hover target, Blizzard cleanup runs only after a tooltip
 --   was actually shown.
 -- ---------------------------------------------------------------------------
 local TOOLTIP_HOVER_DELAY = 0.12
@@ -391,7 +391,7 @@ local function GetBagSlot(button)
 	end
 	local bag = parent and parent:GetID()
 	local slot = button:GetID()
-	-- Backpack is bag 0; bank tabs can be negative. Only slot must be positive.
+	-- Backpack is bag 0, bank tabs can be negative. Only slot must be positive.
 	if bag == nil or not slot or slot <= 0 then
 		return nil, nil
 	end
@@ -628,7 +628,7 @@ function F.CreatePool(creator, onRemoved, onAcquired)
 
 	--- Pre-build `count` objects and immediately park them. Done out of combat
 	--- so the secure item buttons we hand out mid-fight were created clean and
-	--- never taint the bag frame (the BetterBags trick).
+	--- never taint the bag frame.
 	function pool:Prewarm(count)
 		local made = {}
 		for i = 1, count do
@@ -648,7 +648,7 @@ function F.CreatePool(creator, onRemoved, onAcquired)
 end
 
 -- ---------------------------------------------------------------------------
--- Blizzard secure-action proxies (bank tab purchase, money transfer, …)
+-- Blizzard secure-action proxies (bank tab purchase, money transfer, ...)
 --   Protected APIs must run from Blizzard's untainted OnClick path. Addon
 --   buttons use InsecureActionButtonTemplate + clickbutton forwarding.
 -- ---------------------------------------------------------------------------
@@ -676,7 +676,7 @@ function F.GetBlizzardBankMoneyButtons()
 end
 
 --- Keep Blizzard withdraw/deposit handlers alive for secure click proxies.
---- Purchase-prompt mode hides MoneyFrame; without this, clickbutton targets stay
+--- Purchase-prompt mode hides MoneyFrame, without this, clickbutton targets stay
 --- hidden/disabled and warband gold transfer never opens the popup.
 function F.PrepareBlizzardBankMoneyButtons(bankType)
 	local panel = F.GetBlizzardBankPanel()
@@ -704,7 +704,7 @@ function F.PrepareBlizzardBankMoneyButtons(bankType)
 	if deposit and deposit.Refresh then
 		deposit:Refresh()
 	end
-	-- Bagforge paints its own money display; hide Blizzard chrome only.
+	-- Bagforge paints its own money display, hide Blizzard chrome only.
 	if moneyFrame.MoneyDisplay then
 		moneyFrame.MoneyDisplay:Hide()
 	end
@@ -907,7 +907,7 @@ end
 -- Secret values (Patch 12.0 / Midnight)
 --   Only gate APIs Resources tags as return-secret (see
 --   wow-midnight-secret-values-guide.mdc). Item/container/money fields are
---   SecretArguments-only or untagged — do not invent IsSecret there.
+--   SecretArguments-only or untagged - do not invent IsSecret there.
 --   Keep helpers for identity (Recent GUID) and IsSecretLuaError swallows.
 -- ---------------------------------------------------------------------------
 do
@@ -930,8 +930,8 @@ do
 		return not canaccessvalue or canaccessvalue(value)
 	end
 
-	--- Return `value` when safe to compare or do arithmetic; nil if secret/missing.
-	--- Prefer raw numbers for untagged item APIs; kept for soft coerce callers.
+	--- Return `value` when safe to compare or do arithmetic, nil if secret/missing.
+	--- Prefer raw numbers for untagged item APIs, kept for soft coerce callers.
 	function F.SafeNumber(value)
 		if value == nil or F.IsSecret(value) then
 			return nil
@@ -939,7 +939,7 @@ do
 		return value
 	end
 
-	--- Return `value` when safe to branch on; nil if secret/missing.
+	--- Return `value` when safe to branch on, nil if secret/missing.
 	function F.SafeBool(value)
 		if value == nil or F.IsSecret(value) then
 			return nil
@@ -988,7 +988,7 @@ local function ApplyButtonArt(btn, art, setTexture, setAtlas)
 	if not art then
 		return
 	end
-	-- fileID (number) or an explicit texture path (has a slash) -> SetTexture;
+	-- fileID (number) or an explicit texture path (has a slash) -> SetTexture.
 	-- a plain name is an atlas, which needs Set*Atlas to resolve.
 	if type(art) == "number" or art:find("[\\/]") then
 		btn[setTexture](btn, art)
@@ -1027,7 +1027,7 @@ function F.SetIconButtonHighlightSize(button, size)
 end
 
 --- Additive bags-newitem glow shared by armed toolbar modes and chrome hovers.
---- `inset` pulls the glow inward (px); default 0 matches the armed-mode buttons.
+--- `inset` pulls the glow inward (px), default 0 matches the armed-mode buttons.
 function F.EnsureIconGlow(button, inset)
 	if button.bfIconGlow then
 		return button.bfIconGlow

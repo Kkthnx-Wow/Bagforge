@@ -1,7 +1,7 @@
 --[[
 	Bagforge - Saved Searches
 	-------------------------------------------------------------------------
-	Named, account-wide search presets (Baganator parity). The player types a
+	Named, account-wide search presets. The player types a
 	query into any Bagforge search box, right-clicks the box, and saves it under
 	a name. Recalling one writes the query back into the box, which drives
 	Blizzard's native bag filter (BagSearch_OnTextChanged -> C_Container.SetItemSearch).
@@ -12,7 +12,7 @@
 	  * Delete > / Clear All       : manage the list.
 
 	Storage is account-wide (ns.global.savedSearches) so presets follow the
-	player across characters, matching Baganator's saved_searches scope. The
+	player across characters, matching saved_searches scope. The
 	list is an ordered array of { name = <string>, query = <string> }.
 --]]
 
@@ -126,7 +126,7 @@ function SavedSearches:Clear()
 	end
 end
 
---- Write `query` into `box`; BagSearchBoxTemplate's OnTextChanged then drives
+--- Write `query` into `box`, BagSearchBoxTemplate's OnTextChanged then drives
 --- the native bag filter (C_Container.SetItemSearch) and syncs sibling boxes.
 function SavedSearches:Apply(box, query)
 	if not (box and box.SetText and type(query) == "string") then

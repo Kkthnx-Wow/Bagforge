@@ -2,7 +2,7 @@
 	Bagforge - CanIMogIt integration
 	-------------------------------------------------------------------------
 	When CanIMogIt is installed, show its learnable/transmog overlay on bag and
-	bank item buttons. Mirrors NDui's UpdateCanIMogIt: ask the addon for tooltip
+	bank item buttons. We ask the addon for tooltip
 	text per slot and paint its icon texture when present.
 --]]
 

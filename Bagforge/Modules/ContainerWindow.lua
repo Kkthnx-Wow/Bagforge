@@ -60,7 +60,7 @@ function ContainerWindow.GetChromeInsets()
 	local btnW = 20
 	local btnGap = 3
 	local searchY = ContainerWindow.GetChromeSearchY()
-	-- Bottom-align 20px icon buttons with the 24px search box; MAIN_CHROME_BTN_OFFSET nudges up.
+	-- Bottom-align 20px icon buttons with the 24px search box, MAIN_CHROME_BTN_OFFSET nudges up.
 	local btnY = searchY - L.MAIN_CHROME_ROW_HEIGHT + btnW + (L.MAIN_CHROME_BTN_OFFSET or 0)
 	return leftX, rightX, btnY, btnW, btnGap
 end
@@ -239,7 +239,7 @@ local function SearchReserve(rightX, btnW, btnGap, rightButtonCount)
 	return rightX + btnW * rightButtonCount + btnGap * max(rightButtonCount - 1, 0) + 6
 end
 
--- SearchBoxTemplate border art is authored at 20px in InputBoxVisualTemplate; the
+-- SearchBoxTemplate border art is authored at 20px in InputBoxVisualTemplate, the
 -- edit box frame can be taller but the chrome won't grow unless we stretch it.
 local function SearchBoxHeight()
 	return C.Layout.MAIN_CHROME_ROW_HEIGHT
@@ -261,7 +261,7 @@ function ContainerWindow:CreateSearchBox(rightButtonCount)
 	local leftX, rightX, _, btnW, btnGap = ContainerWindow.GetChromeInsets()
 	local reserve = SearchReserve(rightX, btnW, btnGap, rightButtonCount)
 	-- BagSearchBoxTemplate inherits SearchBoxTemplate's look (same chrome as
-	-- Baganator's box) but, unlike the bare template, natively drives Blizzard's
+	-- box) but, unlike the bare template, natively drives Blizzard's
 	-- bag search: it calls C_Container.SetItemSearch, fires INVENTORY_SEARCH_UPDATE
 	-- (our incremental filter refresh hangs off that) and keeps every bag/bank
 	-- search field in sync. Hand-wiring the bare template proved unreliable.
@@ -309,8 +309,8 @@ end
 
 --- First open / combat: SettingsFrameTemplate starts at 0x0 until Layout.
 --- Size the main panel to one empty grid row so Show() is visible while
---- pendingDraw waits for PLAYER_REGEN_ENABLED (BetterBags also defers bag
---- work in combat and flushes on regen — Events.lua PLAYER_REGEN_ENABLED).
+--- pendingDraw waits for PLAYER_REGEN_ENABLED (bag work is deferred in combat
+--- and flushed on regen - Events.lua PLAYER_REGEN_ENABLED).
 function ContainerWindow:EnsureShellSize(columns)
 	local main = self.mainContainer
 	if not (main and main.frame) or main._lastW then
@@ -390,7 +390,7 @@ function ContainerWindow:DrawCategorized(opts)
 	self.mainContainer.iconSize = iconSize
 	local sections = opts.drawSections or opts.sections
 	local mainName = opts.mainName or (categories and categories:GetMainCategory())
-	-- Each window passes its own perColumn (backpack and bank track it separately);
+	-- Each window passes its own perColumn (backpack and bank track it separately).
 	-- the shared base never reaches into a specific window's DB.
 	local perColumn = opts.perColumn or C.Layout.DEFAULT_CATEGORIES_PER_COLUMN
 
@@ -424,7 +424,7 @@ function ContainerWindow:DrawCategorized(opts)
 	local mainCat = mainSection and mainSection.name or mainName
 	local dirtyCategories = changeset and changeset.dirtyCategories
 	-- Stack merge finalize can collapse piles in categories that were not in the
-	-- slot diff; narrow layout to dirty categories for in-place add/remove patches.
+	-- slot diff, narrow layout to dirty categories for in-place add/remove patches.
 	if dirtyCategories and changeset and changeset.needsFinalize then
 		local stackMerge = ns.db and ns.db.organize and ns.db.organize.stackMerge
 		if stackMerge and not changeset.structureChanged and #changeset.added == 0 and #changeset.removed == 0 then

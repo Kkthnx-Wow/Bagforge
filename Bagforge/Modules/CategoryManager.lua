@@ -4,12 +4,12 @@
 	A small native window listing every player-managed category - custom
 	(assigned items) and saved searches - with inline controls to rename,
 	recolour, reorder, enable/disable, edit the query, set group-by, and delete.
-	Modelled on BetterBags' config/categorypane.lua, kept deliberately light: one
+	Modelled on config/categorypane.lua, kept deliberately light: one
 	SettingsFrameTemplate shell, a plain scroll list, and a pool of reused rows.
 
-	All persistence lives in Modules/Organize (it owns ns.db.organize); this
+	All persistence lives in Modules/Organize (it owns ns.db.organize), this
 	module is pure UI and calls Organize:* for every mutation. Built lazily on
-	first open (Peterodox deferred-setup idiom) so it costs nothing until used.
+	first open so it costs nothing until used.
 --]]
 
 local _, ns = ...
@@ -22,7 +22,7 @@ local C_AddOns = C_AddOns
 local Manager = ns:NewModule("CategoryManager", nil)
 
 -- SettingsFrameTemplate lives in the load-on-demand Blizzard_Settings_Shared
--- addon. Container.lua loads it before the bags use it; the manager can be
+-- addon. Container.lua loads it before the bags use it, the manager can be
 -- opened on its own (slash command) before the bags ever open, so it must
 -- guarantee the template is present or CreateFrame builds a broken shell.
 local SETTINGS_SHARED = "Blizzard_Settings_Shared"
@@ -360,7 +360,7 @@ function Manager:Build()
 		frame.ClosePanelButton:SetShown(true)
 	end
 
-	-- Top action row: saved searches can be created directly from the manager;
+	-- Top action row: saved searches can be created directly from the manager.
 	-- custom categories are created by assigning an item from the bag.
 	local newBtn = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
 	newBtn:SetSize(180, 22)

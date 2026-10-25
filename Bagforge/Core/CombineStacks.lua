@@ -1,13 +1,13 @@
 --[[
 	Bagforge - CombineStacks
 	-------------------------------------------------------------------------
-	Physical stack combine before Blizzard SortBags / SortBank (Baganator
-	Sorting/CombineStacks.lua). Display merge in Scan is unrelated — this
+	Physical stack combine before Blizzard SortBags / SortBank. Display merge
+	in Scan is unrelated - this
 	moves partial stacks onto each other with the cursor so Blizzard's sort
 	sees fewer fragmented piles.
 
-	One combine action per call; callers loop until Complete (WaitingMove /
-	WaitingUnlock) then invoke SortBags. Live C_Container only — no Syndicator.
+	One combine action per call, callers loop until Complete (WaitingMove /
+	WaitingUnlock) then invoke SortBags. Live C_Container only - no Syndicator.
 --]]
 
 local _, ns = ...
@@ -37,7 +37,7 @@ local STATUS = {
 }
 CombineStacks.Status = STATUS
 
--- Reused across calls (hot path — no per-sort {} churn).
+-- Reused across calls (hot path - no per-sort {} churn).
 local stacksByItem = {}
 local partialScratch = {}
 local stackSizeCache = {}
@@ -109,7 +109,7 @@ local function CollectStacks(bags)
 end
 
 --- One cursor combine of the smallest partial onto the largest partial for the
---- first itemID that still needs merging. Baganator DoMovement shape.
+--- first itemID that still needs merging.
 local function DoOneCombine()
 	if InCombatLockdown and InCombatLockdown() then
 		return STATUS.Complete
@@ -166,7 +166,7 @@ local function DoOneCombine()
 	return STATUS.Complete
 end
 
---- Combine partial stacks across `bags`. Returns a STATUS code; callers should
+--- Combine partial stacks across `bags`. Returns a STATUS code, callers should
 --- re-call on WaitingMove / WaitingUnlock / WaitingItemData until Complete.
 function CombineStacks.Run(bags)
 	if not bags or #bags == 0 then

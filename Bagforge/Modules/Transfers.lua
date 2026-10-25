@@ -1,7 +1,7 @@
 --[[
 	Bagforge - Transfers
 	-------------------------------------------------------------------------
-	A small Baganator-inspired action engine for context moves from visible bag
+	A small action engine for context moves from visible bag
 	categories:
 
 	  * vendor a visible backpack category while a merchant is open
@@ -11,7 +11,7 @@
 	  * put a backpack category onto the trade window (AddToTrade.lua)
 
 	Each operation performs one cursor/container action per tick and then waits
-	for the client/server to catch up (Baganator-style status-driven pacing).
+	for the client/server to catch up.
 	Guild bank transfers stay out until we own a live guild UI without Syndicator.
 --]]
 
@@ -158,7 +158,7 @@ local function IsSellable(entry)
 	return price and price > 0
 end
 
--- Baganator Sorting/BagUsageChecks: prefer herb/engineering/reagent bags when routing.
+-- Prefer herb/engineering/reagent bags when routing.
 local function BagInList(bagIDs, bagID)
 	for i = 1, #bagIDs do
 		if bagIDs[i] == bagID then
@@ -381,7 +381,7 @@ local function MarkCategoryAllocated(allocated, bag, slot)
 	allocated[bag][slot] = true
 end
 
---- Baganator BankTransferManager: does this item belong on a tab with `depositFlags`?
+--- Does this item belong on a tab with `depositFlags`?
 local function MatchesDepositFlags(depositFlags, entry)
 	if not depositFlags or not FlagsUtil or not BagSlotFlags then
 		return true
@@ -531,7 +531,7 @@ local function FindDepositTarget(source, view, allocated)
 	return ScanBags(source, bags, allocated, false, bagChecks)
 end
 
---- Flat queue allocations → nested map for FindDepositTarget / ScanBags.
+--- Flat queue allocations -> nested map for FindDepositTarget / ScanBags.
 local function QueueAllocatedNested()
 	local nested = {}
 	for key in pairs(allocatedSlots) do
@@ -543,7 +543,7 @@ local function QueueAllocatedNested()
 	return nested
 end
 
---- Right-click deposit: prefer the tab picker, then Baganator-style depositFlags
+--- Right-click deposit: prefer the tab picker, then depositFlags
 --- across purchased tabs, then any free bank slot (Desktop BankTransferManager).
 local function FindQueuedDepositTarget(view, itemID, count, quality)
 	local source = { itemID = itemID, count = count or 1, quality = quality }
@@ -566,7 +566,7 @@ local function FindQueuedDepositTarget(view, itemID, count, quality)
 	return FindDepositTarget(source, view, allocated)
 end
 
---- @return true moved or source gone; false retry later; nil permanent skip
+--- @return true moved or source gone, false retry later, nil permanent skip
 ProcessQueuedDeposit = function(srcBag, srcSlot)
 	if InCombatLockdown and InCombatLockdown() then
 		return false
@@ -654,7 +654,7 @@ local function Finish(message)
 	if message then
 		F.Print(message)
 	end
-	-- Vendor/mail moves fire BAG_UPDATE; open windows pick up via dirty-bag flush.
+	-- Vendor/mail moves fire BAG_UPDATE, open windows pick up via dirty-bag flush.
 end
 
 local function BagCachePending()
@@ -757,7 +757,7 @@ local function StepVendor()
 	return STATUS.Complete
 end
 
---- Baganator Transfers/AddToMail.lua — UseContainerItem into send-mail slots.
+--- Add to mail: UseContainerItem into send-mail slots.
 local function StepMail()
 	if not running then
 		return
@@ -807,7 +807,7 @@ local function StepMail()
 	return STATUS.Complete
 end
 
---- Baganator Transfers/AddToTrade.lua — PickupContainerItem + ClickTradeButton.
+--- Add to trade: PickupContainerItem + ClickTradeButton.
 local function StepTrade()
 	if not running then
 		return
@@ -950,7 +950,7 @@ function Transfers:Cancel()
 end
 
 --- Queue a backpack right-click deposit. Prefers the bank tab picker, then
---- depositFlags-matched tabs, then any free bank slot (Baganator BankTransferManager).
+--- depositFlags-matched tabs, then any free bank slot.
 --- Returns true when this addon handled routing (caller should cancel default).
 function Transfers:QueueDeposit(srcBag, srcSlot)
 	if not self._hooksInstalled then

@@ -1,8 +1,7 @@
 --[[
 	Bagforge - Recent Items (GUID tracker)
 	-------------------------------------------------------------------------
-	Blizzard exposes `C_NewItems.IsNewItem(bag, slot)`; Baganator's
-	NewItemsTracking keeps a `firstStart` window (~5s) where every bag-cache
+	Blizzard exposes `C_NewItems.IsNewItem(bag, slot)`, 	NewItemsTracking keeps a `firstStart` window (~5s) where every bag-cache
 	refresh re-baselines all current GUIDs as "seen" so existing inventory is
 	never classified as new on login.
 
@@ -12,7 +11,7 @@
 	  * Session timeout clears old markers.
 	  * Clear Blizzard's C_NewItems flag on click and during startup baseline.
 
-	Scan calls `Recent:IsEntryNew(bag, slot, guid)` for category routing; it does
+	Scan calls `Recent:IsEntryNew(bag, slot, guid)` for category routing, it does
 	not read GetContainerItemInfo.isNewItem (stale during login bursts).
 
 	Event ownership: Items owns BAG_UPDATE_DELAYED (and calls Recent:Scan from
@@ -32,8 +31,8 @@ local ipairs = ipairs
 local pairs = pairs
 local wipe = wipe
 
-local RECENT_TIMEOUT = 600 -- seconds; session-only, no saved data churn.
--- Baganator uses 5s; covers the login bag-cache burst before marking new GUIDs.
+local RECENT_TIMEOUT = 600 -- seconds, session-only, no saved data churn.
+-- 5s covers the login bag-cache burst before marking new GUIDs.
 local STARTUP_BASELINE_SECONDS = 5
 
 local Recent = ns:NewModule("Recent")
@@ -128,7 +127,7 @@ function Recent:Scan()
 				seenGUIDs[guid] = true
 
 				-- Login startup: treat everything currently carried as seen and
-				-- clear stale Blizzard new-item flags (Baganator firstStart).
+				-- clear stale Blizzard new-item flags.
 				if firstStart then
 					RemoveBlizzardNewItem(bag, slot)
 				elseif not wasSeen then
@@ -240,7 +239,7 @@ function Recent:OnEnable()
 	self._eventHandles = self._eventHandles or {}
 
 	-- GUID baseline on login/zone. Bag loot GUID walks are owned by Items
-	-- (BAG_UPDATE_DELAYED → Recent:Scan); we only own new-item flag refresh.
+	-- (BAG_UPDATE_DELAYED -> Recent:Scan), we only own new-item flag refresh.
 	local debouncedScan = F.DebounceTrailingNoArgs(0.05, function()
 		Recent:Scan()
 	end)
@@ -249,7 +248,7 @@ function Recent:OnEnable()
 		if not (items and items.AnyWindowOpen and items:AnyWindowOpen()) then
 			return
 		end
-		-- Items already ran Recent:Scan on the delayed bag flush; only reclassify.
+		-- Items already ran Recent:Scan on the delayed bag flush, only reclassify.
 		if ns.RefreshRecentFlags then
 			ns:RefreshRecentFlags()
 		end

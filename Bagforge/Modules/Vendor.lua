@@ -7,8 +7,8 @@
 
 	Selling is the part that bites naive implementations: the server silently
 	rate-limits rapid sells, so firing every UseContainerItem in one frame
-	("sell all my junk") drops most of them. NDui solves this by selling one
-	item per tick on a timer; we do the same:
+	("sell all my junk") drops most of them. The fix is to sell one
+	item per tick on a timer:
 
 	  * Grey junk           - C_MerchantFrame.SellAllJunkItems() clears it in a
 	    single native, server-side action (instant, no client throttle).
@@ -16,9 +16,9 @@
 	    SELL_THROTTLE seconds) sweeps user-flagged junk and anything the native
 	    call missed, stopping on MERCHANT_CLOSED or the "vendor won't buy" error.
 
-	Repair tries guild funds first (when allowed and within the withdraw cap);
+	Repair tries guild funds first (when allowed and within the withdraw cap).
 	if the guild bank can't actually cover the bill we catch the error and fall
-	back to personal funds (NDui's UI_ERROR_MESSAGE pattern).
+	back to personal funds.
 
 	Merchant interactions happen out of combat, so there's no taint/lockdown concern.
 
@@ -197,7 +197,7 @@ function CancelGuildRepair()
 end
 
 -- 0.5s after a guild-repair attempt: if the bank couldn't cover it (error
--- caught above), repair from personal funds instead; otherwise report success.
+-- caught above), repair from personal funds instead, otherwise report success.
 function FinishGuildRepair()
 	ns:UnregisterEvent("UI_ERROR_MESSAGE", OnRepairError)
 	ns:UnregisterEvent("MERCHANT_CLOSED", OnMerchantClosedRepair)
@@ -205,7 +205,7 @@ function FinishGuildRepair()
 		return
 	end
 	guildRepairPending = false
-	-- Merchant closed before the timer — don't spend personal gold as a "fallback".
+	-- Merchant closed before the timer - don't spend personal gold as a "fallback".
 	if not (MerchantFrame and MerchantFrame:IsShown()) then
 		return
 	end
@@ -287,7 +287,7 @@ end
 -- ---------------------------------------------------------------------------
 function Vendor:OnEnable()
 	-- Registered unconditionally so the individual toggles (and the master
-	-- switch) apply live; the handler re-reads the DB on every merchant visit.
+	-- switch) apply live, the handler re-reads the DB on every merchant visit.
 	self.merchantShowHandler = self:RegisterEvent("MERCHANT_SHOW", self.OnMerchantShow)
 end
 

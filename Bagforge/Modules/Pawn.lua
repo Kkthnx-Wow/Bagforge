@@ -2,8 +2,8 @@
 	Bagforge - Pawn integration
 	-------------------------------------------------------------------------
 	When the Pawn addon is installed, show its green upgrade arrow on bag/bank
-	items that are an upgrade for the player. Mirrors BetterBags' integration
-	(integrations/pawn.lua): after each draw we ask Pawn whether an item link
+	items that are an upgrade for the player. After each draw we ask Pawn
+	whether an item link
 	should carry an upgrade arrow and toggle the button's overlay accordingly.
 
 	We don't compute anything ourselves - Pawn owns the scoring/comparison. Our
@@ -12,7 +12,7 @@
 	the answer might change (Pawn loads, gear swaps, scales change).
 
 	Pawn's upgrade APIs exist at file load but return errors until PawnIsReady()
-	(PLAYER_LOGIN init). Never call them before ready — see Pawn.lua
+	(PLAYER_LOGIN init). Never call them before ready - see Pawn.lua
 	PawnShouldItemLinkHaveUpgradeArrowUnbudgeted and PawnIsReady().
 --]]
 
@@ -35,7 +35,7 @@ Pawn.group = "display"
 -- Pawn defines these globals only when installed, so their presence is also our
 -- "is Pawn loaded" probe. PawnShouldItemLinkHaveUpgradeArrow is the API Pawn's
 -- own PawnBags.lua tells bag authors to use (it can answer nil = "ask again
--- shortly" when throttled); the Unbudgeted variant is the older fallback.
+-- shortly" when throttled), the Unbudgeted variant is the older fallback.
 local function PawnAvailable()
 	return type(_G["PawnShouldItemLinkHaveUpgradeArrow"]) == "function" or type(_G["PawnShouldItemLinkHaveUpgradeArrowUnbudgeted"]) == "function"
 end
@@ -97,7 +97,7 @@ end)
 local resultCache = {}
 
 --- Returns true only when Pawn positively reports `link` as an upgrade.
---- Pawn is pcall'd so a Pawn-side error can never break a bag draw. Resolved answers are cached; a
+--- Pawn is pcall'd so a Pawn-side error can never break a bag draw. Resolved answers are cached, a
 --- nil answer (throttled) holds the arrow hidden for now and queues a retry.
 function Pawn:IsUpgrade(link)
 	if not link then
@@ -160,7 +160,7 @@ end
 
 -- ---------------------------------------------------------------------------
 -- Wiring
---   Publishing the checker (or clearing it) is all the item button needs; a
+--   Publishing the checker (or clearing it) is all the item button needs, a
 --   redraw then repaints every visible slot with the right arrow state.
 -- ---------------------------------------------------------------------------
 function Pawn:Apply()
@@ -209,7 +209,7 @@ function Pawn:OnEnable()
 	end
 
 	-- Equipping/changing gear or editing a Pawn scale changes what counts as an
-	-- upgrade; refresh so the arrows track it. A full gear / equipment-set swap
+	-- upgrade, refresh so the arrows track it. A full gear / equipment-set swap
 	-- fires PLAYER_EQUIPMENT_CHANGED once per slot (~16 in a burst), so debounce
 	-- to re-evaluate and repaint once per swap instead of once per slot - the
 	-- same event-storm coalescing the rest of the addon uses.

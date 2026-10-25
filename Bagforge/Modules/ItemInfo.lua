@@ -6,14 +6,14 @@
 	  * Bind labels (BoE / BoU / BoA / WuE) on unbound items.
 	  * A red icon tint on items your class can't use or you're too low level for.
 
-	The item button does the actual drawing; this module owns the data + toggles
+	The item button does the actual drawing, this module owns the data + toggles
 	and publishes small checkers the button reads while painting (the same shape
 	as the Pawn integration).
 
-	Unusable tint follows the Bagnon/BagBrother stack (ItemSearch-1.3 + LibUnfit)
-	and KkthnxUI's bag buttons: class weapon/armor proficiency, explicit tooltip
+	Unusable tint uses class proficiency tables (from LibUnfit-1.0, GPL3, see the
+	attribution below): class weapon/armor proficiency, explicit tooltip
 	class requirements (ITEM_CLASSES_ALLOWED), and itemMinLevel vs player level.
-	We do NOT use C_PlayerInfo.CanUseItem — it returns false for wrong primary
+	We do NOT use C_PlayerInfo.CanUseItem - it returns false for wrong primary
 	stats/spec gear you can still equip, which painted usable leather red.
 
 	Item metadata used here is plain data in the 12.0.7 API docs.
@@ -44,6 +44,7 @@ ns:RegisterDefaults({
 		itemLevel = true,
 		bindText = true,
 		unusable = true,
+		greyJunk = false,
 		itemLevelCorner = "bottomleft",
 		bindTextCorner = "topright",
 		markerCorner = "topleft",
@@ -69,7 +70,7 @@ ItemInfo.group = "display"
 
 -- ---------------------------------------------------------------------------
 -- Class-restriction data (resolved to the player's class at login).
---   Reproduced from LibUnfit-1.0 (João Cardoso, GPL3) via NexEnhance:
+--   Reproduced from LibUnfit-1.0 (Joao Cardoso, GPL3) via NexEnhance:
 --   playerUnusable[itemClassID][itemSubClassID] = true -> unusable subtype.
 -- ---------------------------------------------------------------------------
 local playerUnusable
@@ -118,9 +119,9 @@ local function BuildUnusable()
 end
 
 -- ---------------------------------------------------------------------------
--- Usability (Bagnon ItemSearch-1.3 + LibUnfit-1.0 + KkthnxUI level gate).
+-- Usability.
 --   1. LibUnfit class weapon/armor proficiency tables.
---   2. Tooltip "Classes: …" line (ITEM_CLASSES_ALLOWED) for restricted gear.
+--   2. Tooltip "Classes: ..." line (ITEM_CLASSES_ALLOWED) for restricted gear.
 --   3. itemMinLevel > player level.
 -- Does not use C_PlayerInfo.CanUseItem (stat/spec false negatives).
 -- ---------------------------------------------------------------------------
@@ -209,7 +210,7 @@ local function IsProficiencyUnusable(key)
 	return false
 end
 
---- Bagnon ItemSearch: scan tooltip for ITEM_CLASSES_ALLOWED (not red stat lines).
+--- Scan tooltip for ITEM_CLASSES_ALLOWED (not red stat lines).
 local function HasClassRequirementMismatch(itemID)
 	if not itemID then
 		return false
@@ -282,7 +283,7 @@ function ItemInfo:IsUnusable(item)
 		return false
 	end
 
-	-- Defer until item data is loaded; a premature check can cache a wrong answer.
+	-- Defer until item data is loaded, a premature check can cache a wrong answer.
 	if IsItemDataCachedByID and not IsItemDataCachedByID(itemID) then
 		return false
 	end
@@ -353,7 +354,7 @@ function ItemInfo:GetItemLevel(entry)
 
 	-- Match the game tooltip (timewarped/scaled gear shows the same ilvl the player sees).
 	-- WoWUIBugs #828: GetDetailedItemLevelInfo and GetItemInfo.itemLevel can return
-	-- wrong values in 12.0+; tooltip + Item:GetCurrentItemLevel are reliable.
+	-- wrong values in 12.0+, tooltip + Item:GetCurrentItemLevel are reliable.
 	if entry.bag and entry.slot and C_TooltipInfo and C_TooltipInfo.GetBagItem and LINE_ITEM_LEVEL then
 		local ok, data = pcall(C_TooltipInfo.GetBagItem, entry.bag, entry.slot)
 		if ok and data and data.lines then
@@ -463,7 +464,7 @@ function ItemInfo:GetBindLabel(entry)
 		end
 	end
 
-	-- Only memoise a definitive answer; if neither source had data yet (item not
+	-- Only memoise a definitive answer, if neither source had data yet (item not
 	-- cached), leave it unresolved so a later rescan can fill it in.
 	if resolved and id then
 		F.CacheSet(bindLabelCache, id, label or false, 600)
@@ -569,6 +570,10 @@ function ItemInfo:RegisterOptions(category, builder)
 
 	local _, unfit = builder:Checkbox(category, self, "unusable", L["Color Unusable Items"], L["Tint icons red for items your class can't use or that you're too low level for."])
 	builder:DependsOn(unfit, master)
+
+	-- Independent of the master toggle: greying junk is useful even with the
+	-- item-level / bind overlays turned off.
+	builder:Checkbox(category, self, "greyJunk", L["Grey Out Junk"], L["Desaturate the icons of junk items (poor-quality and anything on your custom-junk list)."])
 
 	builder:Header(L["Overlay Positions"])
 	local _, ilvlPos = builder:Dropdown(category, self, "itemLevelCorner", L["Item Level Position"], L["Which corner of the slot shows the item level."], CORNER_CHOICES)

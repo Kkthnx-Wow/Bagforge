@@ -54,6 +54,20 @@ local GUILD_NOT_ENOUGH = _G["LE_GAME_ERR_GUILD_NOT_ENOUGH_MONEY"]
 -- One sell per this many seconds keeps us under the server's sell rate limit.
 local SELL_THROTTLE = 0.2
 
+-- Bags the player flagged "ignore when selling junk" (also set from the bag menu).
+local EXCLUDE_JUNK_SELL = Enum.BagSlotFlags and Enum.BagSlotFlags.ExcludeJunkSell
+
+local function BagIgnoresJunkSell(bag)
+	-- The backpack keeps its own switch, it has no slot flag.
+	if bag == Enum.BagIndex.Backpack then
+		return C_Container.GetBackpackSellJunkDisabled and C_Container.GetBackpackSellJunkDisabled() and true or false
+	end
+	if not (EXCLUDE_JUNK_SELL and C_Container.GetBagSlotFlag) then
+		return false
+	end
+	return C_Container.GetBagSlotFlag(bag, EXCLUDE_JUNK_SELL) and true or false
+end
+
 ns:RegisterDefaults({
 	vendor = {
 		active = true,
@@ -121,7 +135,7 @@ function SellStep()
 	end
 	local db = ns.db.vendor
 	for _, bag in ipairs(C.BACKPACK_BAGS) do
-		local numSlots = C_Container.GetContainerNumSlots(bag) or 0
+		local numSlots = BagIgnoresJunkSell(bag) and 0 or (C_Container.GetContainerNumSlots(bag) or 0)
 		for slot = 1, numSlots do
 			local key = F.SlotKey(bag, slot)
 			if not sellCache[key] then
@@ -149,7 +163,7 @@ function OnMerchantClosedSell()
 	CancelGuildRepair()
 end
 
-function StartSelling(db)
+function StartSelling()
 	-- Native bulk clear for grey junk first: one server-side action, no client
 	-- throttle, instant. Guarded by IsSellAllJunkEnabled where present.
 	if C_MerchantFrame and C_MerchantFrame.SellAllJunkItems then
@@ -275,7 +289,7 @@ function Vendor:OnMerchantShow()
 		return
 	end
 	if db.autoSellJunk then
-		StartSelling(db)
+		StartSelling()
 	end
 	if db.autoRepair then
 		DoRepair(false)

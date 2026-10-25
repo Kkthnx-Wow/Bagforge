@@ -47,7 +47,6 @@ ns.Container = Container
 
 local SETTINGS_SHARED = "Blizzard_Settings_Shared"
 local UIPANELS_GAME = "Blizzard_UIPanels_Game"
-local BagIndex = Enum.BagIndex
 local IsAccountSecured = IsAccountSecured
 
 local extendedTemplatesReady = false

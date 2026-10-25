@@ -7,7 +7,7 @@
 	sees fewer fragmented piles.
 
 	One combine action per call, callers loop until Complete (WaitingMove /
-	WaitingUnlock) then invoke SortBags. Live C_Container only - no Syndicator.
+	WaitingUnlock) then invoke SortBags. Reads live C_Container data only.
 --]]
 
 local _, ns = ...

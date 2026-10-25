@@ -199,7 +199,7 @@ function Backpack:BuildChrome()
 	-- locked highlight is the "armed" cue.
 	local assign = F.CreateIconButton(frame, btnW, btnW, "Interface\\AddOns\\Bagforge\\assets\\FavoritesIcon")
 	assign:SetPoint("RIGHT", bagToggle, "LEFT", -btnGap, 0)
-	assign:SetScript("OnClick", function(btn)
+	assign:SetScript("OnClick", function()
 		local organize = ns:GetModule("Organize")
 		if organize then
 			organize:ToggleMode("assign")
@@ -229,7 +229,7 @@ function Backpack:BuildChrome()
 	-- F.CreateIconButton routes plain names through SetNormalAtlas.)
 	local junk = F.CreateIconButton(frame, btnW, btnW, "SpellIcon-256x256-SellJunk")
 	junk:SetPoint("RIGHT", assign, "LEFT", -btnGap, 0)
-	junk:SetScript("OnClick", function(btn)
+	junk:SetScript("OnClick", function()
 		local organize = ns:GetModule("Organize")
 		if not organize then
 			return

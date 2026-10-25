@@ -188,8 +188,8 @@ local function ApplyUnusableTint(parent, entry)
 end
 
 -- Warband / bank deposit dim is Blizzard ItemContextOverlay (0.8 black) via
--- UpdateItemContextMatching - do NOT add a second overlay. 1.5.0 stacked an
--- Ellesmere-style 0.75 dim on top and icons went pitch black.
+-- UpdateItemContextMatching - do NOT add a second overlay. 1.5.0 stacked a
+-- custom 0.75 dim on top and icons went pitch black.
 
 -- `entry` is one slot record from Items:GetSlots().
 local function SnapshotButtonPaint(entry)
@@ -281,7 +281,7 @@ local function Button_SetItem(self, entry)
 	-- GetItemQualityByID(itemID) is the item template and often Uncommon/green
 	-- while bonus-ID gear is Epic.
 	local quality = nil
-	local bag, slot = entry.bag, entry.slot
+	local slot = entry.slot
 	if bag and slot and qualityLocation and C_Item.GetItemQuality then
 		-- One shared location, repointed per call, instead of a table per paint.
 		qualityLocation:SetBagAndSlot(bag, slot)
@@ -801,8 +801,8 @@ local function CreateButton()
 		if mouseButton ~= "RightButton" then
 			return
 		end
-		local parent = self:GetParent()
-		local srcBag = parent and parent:GetID()
+		local owner = self:GetParent()
+		local srcBag = owner and owner:GetID()
 		local srcSlot = self:GetID()
 		if not (srcBag and srcSlot and srcSlot ~= 0) then
 			return
@@ -1083,10 +1083,10 @@ function ItemButton:OnEnable()
 		combatLayoutPending = false
 		-- Top up the pool while clean so the next in-combat refresh can't run dry.
 		if not InCombatLockdown() and ItemButton.pool then
-			local prewarm = C.EstimateItemButtonPoolSize and C.EstimateItemButtonPoolSize() or C.Layout.ITEM_BUTTON_POOL_PREWARM or 400
+			local want = C.EstimateItemButtonPoolSize and C.EstimateItemButtonPoolSize() or C.Layout.ITEM_BUTTON_POOL_PREWARM or 400
 			local have = #ItemButton.pool.objects
-			if have < prewarm then
-				ItemButton.pool:Prewarm(prewarm - have)
+			if have < want then
+				ItemButton.pool:Prewarm(want - have)
 			end
 		end
 		ns:RefreshBags(false)

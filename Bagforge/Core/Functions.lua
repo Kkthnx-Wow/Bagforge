@@ -901,9 +901,9 @@ end
 
 -- ---------------------------------------------------------------------------
 -- Secret values (Patch 12.0 / Midnight)
---   Only gate APIs Resources tags as return-secret (see
---   wow-midnight-secret-values-guide.mdc). Item/container/money fields are
---   SecretArguments-only or untagged - do not invent IsSecret there.
+--   Only gate APIs the generated API docs tag as return-secret. Item, container
+--   and money fields are SecretArguments-only or untagged - do not invent
+--   IsSecret checks there.
 --   Keep helpers for identity (Recent GUID) and IsSecretLuaError swallows.
 -- ---------------------------------------------------------------------------
 do

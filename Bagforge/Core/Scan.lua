@@ -51,7 +51,7 @@
 	  RefreshLock            - single-slot lock overlay (PatchSlot)
 
 	Full Run() reserved for: login, BAG_CONTAINER_UPDATE, stack-merge disable,
-	needsFinalize fallback, _scanDirty open. See bagforge-conventions.mdc.
+	needsFinalize fallback, _scanDirty open.
 
 	Item and container metadata used by the scanner is plain data in the 12.0.7 API docs.
 --]]
@@ -756,36 +756,36 @@ local function GetFastMeta(pool, itemID)
 	return pool[itemID]
 end
 
-local function ApplyFastMeta(entry, meta)
-	if meta.name then
-		entry.name = meta.name
+local function ApplyFastMeta(entry, fast)
+	if fast.name then
+		entry.name = fast.name
 	end
-	if meta.expacID then
-		entry.expacID = meta.expacID
+	if fast.expacID then
+		entry.expacID = fast.expacID
 	end
-	if meta.maxStack then
-		entry.maxStack = meta.maxStack
+	if fast.maxStack then
+		entry.maxStack = fast.maxStack
 	end
-	if meta.classID then
-		entry.classID = meta.classID
+	if fast.classID then
+		entry.classID = fast.classID
 	end
-	if meta.subClassID then
-		entry.subClassID = meta.subClassID
+	if fast.subClassID then
+		entry.subClassID = fast.subClassID
 	end
-	if meta.itemType then
-		entry.itemType = meta.itemType
+	if fast.itemType then
+		entry.itemType = fast.itemType
 	end
-	if meta.itemSubType then
-		entry.itemSubType = meta.itemSubType
+	if fast.itemSubType then
+		entry.itemSubType = fast.itemSubType
 	end
-	if meta.itemEquipLoc then
-		entry.itemEquipLoc = meta.itemEquipLoc
+	if fast.itemEquipLoc then
+		entry.itemEquipLoc = fast.itemEquipLoc
 	end
-	if meta.invSlotID then
-		entry.invSlotID = meta.invSlotID
+	if fast.invSlotID then
+		entry.invSlotID = fast.invSlotID
 	end
-	if meta.sellPrice then
-		entry.sellPrice = meta.sellPrice
+	if fast.sellPrice then
+		entry.sellPrice = fast.sellPrice
 	end
 end
 

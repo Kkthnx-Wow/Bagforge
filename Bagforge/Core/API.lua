@@ -560,7 +560,7 @@ end
 
 --- Register a callback invoked whenever a bag item button is populated or cleared.
 --- `func(button, bagID, slotID, entry)` - entry is nil when the slot is empty.
---- Mirrors OneWoW_Bags:RegisterItemButtonCallback for third-party overlay addons.
+--- Meant for third-party overlay addons.
 function API:RegisterItemButtonCallback(key, func)
 	if type(key) ~= "string" or key == "" then
 		F.Print("|cffff5555API:|r RegisterItemButtonCallback needs a unique string key.")

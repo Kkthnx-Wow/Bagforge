@@ -18,8 +18,8 @@ local wipe = wipe
 local Items = ns:NewModule("Items")
 
 -- One scanner instance owns this module's slots/sections/free-slot results.
-local scanner = ns.Scan.New()
-Items.scanner = scanner
+local backpackScanner = ns.Scan.New()
+Items.scanner = backpackScanner
 Items._dirtyBackpackBags = {}
 Items._dirtySlotScratch = {}
 
@@ -43,7 +43,7 @@ function Items:Scan(dirtyBags, dirtySlotKeys)
 	if ns.Search and ns.Search.InvalidateTooltips then
 		ns.Search.InvalidateTooltips()
 	end
-	scanner:Run(C.BACKPACK_BAGS, onScanComplete, dirtyBags, dirtySlotKeys)
+	backpackScanner:Run(C.BACKPACK_BAGS, onScanComplete, dirtyBags, dirtySlotKeys)
 end
 
 --- Lighter refresh after Blizzard bag sort: reuse cached item metadata when
@@ -58,7 +58,7 @@ function Items:ScanAfterSort()
 	if ns.Search and ns.Search.InvalidateTooltips then
 		ns.Search.InvalidateTooltips()
 	end
-	scanner:RefreshAfterSort(C.BACKPACK_BAGS, onScanComplete)
+	backpackScanner:RefreshAfterSort(C.BACKPACK_BAGS, onScanComplete)
 end
 
 function Items:MarkScanDirty()
@@ -69,15 +69,15 @@ end
 -- Public accessors used by the view
 -- ---------------------------------------------------------------------------
 function Items:GetSlots()
-	return scanner.slots
+	return backpackScanner.slots
 end
 
 function Items:GetSections()
-	return scanner.sections
+	return backpackScanner.sections
 end
 
 function Items:GetFreeSlots()
-	return scanner.freeSlots
+	return backpackScanner.freeSlots
 end
 
 --- True when any Bagforge bag/bank window is on screen. Used to skip work (e.g.
@@ -135,7 +135,7 @@ local function FlushBackpackRefresh(dirtyBackpackBags)
 	local dirtyCopy = (not sortFlush) and CopyDirtyBags(dirtyBackpackBags, Items._dirtyBagCopy) or nil
 	local dirtySlots
 	if dirtyCopy and ns.Scan and ns.Scan.CollectDirtySlotKeys then
-		dirtySlots = ns.Scan.CollectDirtySlotKeys(scanner, C.BACKPACK_BAGS, dirtyCopy, Items._dirtySlotScratch)
+		dirtySlots = ns.Scan.CollectDirtySlotKeys(backpackScanner, C.BACKPACK_BAGS, dirtyCopy, Items._dirtySlotScratch)
 		if not dirtySlots then
 			wipe(dirtyBackpackBags)
 			return
@@ -455,14 +455,14 @@ function Items:OnEnable()
 	-- Events.lua: INVENTORY_SEARCH_UPDATE - Blizzard bag search (BagSearchBox).
 	-- Keep the model in sync even while closed so Open() paints correct dim/hide.
 	local refreshSearch = F.DebounceNoArgs(0.05, function()
-		if not scanner:RefreshFiltered() then
+		if not backpackScanner:RefreshFiltered() then
 			return
 		end
 		if not Items:AnyWindowOpen() then
 			Items:MarkScanDirty()
 			return
 		end
-		ns:TriggerCallback("Items.Updated", scanner.lastChangeset)
+		ns:TriggerCallback("Items.Updated", backpackScanner.lastChangeset)
 	end)
 	ns:TrackEvent(handles, "INVENTORY_SEARCH_UPDATE", refreshSearch)
 
@@ -478,7 +478,7 @@ function Items:OnEnable()
 		if not Items:AnyWindowOpen() then
 			return
 		end
-		scanner:RefreshLocks()
+		backpackScanner:RefreshLocks()
 		ns:RefreshBags(false)
 	end)
 	ns:TrackEvent(handles, "ITEM_LOCK_CHANGED", function(_, bag, slot)
@@ -494,7 +494,7 @@ function Items:OnEnable()
 			return
 		end
 
-		scanner:RefreshLock(bag, slot)
+		backpackScanner:RefreshLock(bag, slot)
 
 		local bank = ns:GetModule("Bank")
 		if bank and bank.RefreshSlotLock then
@@ -511,7 +511,7 @@ function Items:OnEnable()
 		if not Items:AnyWindowOpen() then
 			return
 		end
-		local changed = scanner:RefreshQuestState()
+		local changed = backpackScanner:RefreshQuestState()
 		local bank = ns:GetModule("Bank")
 		if bank and bank.RefreshQuestState then
 			changed = bank:RefreshQuestState() or changed
@@ -519,8 +519,8 @@ function Items:OnEnable()
 		if not changed then
 			return
 		end
-		if scanner.lastChangeset then
-			ns:TriggerCallback("Items.Updated", scanner.lastChangeset)
+		if backpackScanner.lastChangeset then
+			ns:TriggerCallback("Items.Updated", backpackScanner.lastChangeset)
 		end
 	end)
 	ns:TrackEvent(handles, "QUEST_LOG_UPDATE", refreshQuest)
@@ -563,7 +563,7 @@ function Items:OnEnable()
 			if categories and categories.InvalidateItemProps then
 				categories:InvalidateItemProps(itemID)
 			end
-			local changed, junk, finalize = scanner:RefreshItemID(itemID, backpackAccum)
+			local changed, junk, finalize = backpackScanner:RefreshItemID(itemID, backpackAccum)
 			backpackAccum = true
 			if finalize then
 				needRescan = true
@@ -591,7 +591,7 @@ function Items:OnEnable()
 		if needRescan then
 			ns:RefreshBags(true)
 		elseif backpackLayout then
-			ns:TriggerCallback("Items.Updated", scanner.lastChangeset)
+			ns:TriggerCallback("Items.Updated", backpackScanner.lastChangeset)
 			if bankLayout and bank and bank.DrawPendingLayouts then
 				bank:DrawPendingLayouts()
 			end

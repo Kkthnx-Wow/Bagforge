@@ -531,11 +531,8 @@ function Bank:ResetPosition(scope)
 	for i = 1, #self.views do
 		local view = self.views[i]
 		local key = view.enabledKey or "active"
-		if warbandOnly and key ~= "warband" then
-			-- skip
-		elseif onlyKey and key ~= onlyKey then
-			-- skip
-		else
+		local skip = (warbandOnly and key ~= "warband") or (onlyKey and key ~= onlyKey)
+		if not skip then
 			ns.db.bank["windowPos_" .. key] = nil
 			if view.frame then
 				view:ApplySavedPosition(nil, view.defaultPoint, view.defaultRelPoint, view.defaultX, view.defaultY)

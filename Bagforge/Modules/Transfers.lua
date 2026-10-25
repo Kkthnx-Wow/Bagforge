@@ -12,7 +12,7 @@
 
 	Each operation performs one cursor/container action per tick and then waits
 	for the client/server to catch up.
-	Guild bank transfers stay out until we own a live guild UI without Syndicator.
+	Guild bank transfers stay out until we own a live guild bank window.
 --]]
 
 local _, ns = ...
@@ -545,7 +545,7 @@ local function QueueAllocatedNested()
 end
 
 --- Right-click deposit: prefer the tab picker, then depositFlags
---- across purchased tabs, then any free bank slot (Desktop BankTransferManager).
+--- across purchased tabs, then any free bank slot.
 local function FindQueuedDepositTarget(view, itemID, count, quality)
 	local source = { itemID = itemID, count = count or 1, quality = quality }
 	local allocated = QueueAllocatedNested()

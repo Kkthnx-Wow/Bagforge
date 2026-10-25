@@ -124,7 +124,6 @@ local commandAliases = {
 	depositwarbandbank = "depositwarbank",
 	resetpos = "reset",
 	bankreset = "resetbank",
-	resetwarbank = "resetwarbank",
 	warbankreset = "resetwarbank",
 	resetwarbandbank = "resetwarbank",
 	options = "config",

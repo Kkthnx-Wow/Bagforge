@@ -32,7 +32,7 @@ local function ShowHelp()
 	F.Print("  " .. L["testextslots [on|off] - Preview authenticator backpack slots"])
 	F.Print("  " .. L["debugmoney [on|off|dump] - Warband bank gold transfer diagnostics"])
 	F.Print("  " .. L["diag [clear] - Snapshot live scanner index state to SavedVariables"])
-	F.Print("  " .. L["profile [start|stop|report|bench|native|mem|sources] - Profile the addon"])
+	F.Print("  " .. L["profile - Open the profiler window (also start, stop, report, reset, bench, run, native, mem, sources, stack)"])
 end
 
 local exactCommands = {

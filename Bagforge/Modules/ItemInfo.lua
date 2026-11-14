@@ -439,14 +439,13 @@ function ItemInfo:GetItemLevel(entry)
 		end
 	end
 
-	-- Cheap sources first. Item:GetCurrentItemLevel is one of the two sources the
-	-- 12.0+ ilvl bug leaves reliable (the other is the tooltip), and it costs no
-	-- tooltip build - so ask it before falling back to constructing one. The
-	-- tooltip stays for slots this can't answer (item data not loaded yet), which
-	-- keeps the displayed value identical, including timewarped/scaled gear.
-	-- ItemMixin:GetCurrentItemLevel is C_Item.GetCurrentItemLevel(itemLocation)
-	-- for a bag item (Blizzard_ObjectAPI Item.lua), so call it on a shared
-	-- location instead of building a mixin per slot. Item stays the fallback.
+	-- Cheap source first. The item's own current level is one of the two sources
+	-- the 12.0+ ilvl bug leaves reliable (the other is the tooltip) and it costs
+	-- no tooltip build. ItemMixin:GetCurrentItemLevel is exactly
+	-- C_Item.GetCurrentItemLevel(itemLocation) for a bag item, so call it on a
+	-- shared location instead of building a mixin per slot. The mixin stays as the
+	-- fallback for clients without the static call, and the tooltip below answers
+	-- for slots this can't (item data not loaded yet).
 	if entry.bag and entry.slot and C_Item.GetCurrentItemLevel and C_Item.DoesItemExist and levelLocation then
 		levelLocation:SetBagAndSlot(entry.bag, entry.slot)
 		if C_Item.DoesItemExist(levelLocation) then

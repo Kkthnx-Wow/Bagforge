@@ -808,5 +808,29 @@ do
 	Profiler:Stop(true)
 end
 
+-- 24. an event fired from inside a probed call nests under it
+do
+	local Profiler = ns.Profiler
+	local engineHandler = BagforgeEventFrame:GetScript("OnEvent")
+	C_AddOnProfiler.MeasureCall = function(fn, ...)
+		local ms = (fn == engineHandler) and 4 or 10
+		return { elapsedMilliseconds = ms, elapsedTicks = ms, allocatedBytes = 0, deallocatedBytes = 0 }, fn(...)
+	end
+	local t = { outer = function() fire("NESTED_TEST_EVENT") end }
+	Profiler:Start()
+	Profiler:Track(t, "outer", "nest.outer")
+	t.outer()
+	local rows = Profiler:Report(true)
+	local outer, evt
+	for i = 1, #rows do
+		if rows[i].label == "nest.outer" then outer = rows[i] end
+		if rows[i].label == "event:NESTED_TEST_EVENT" then evt = rows[i] end
+	end
+	check("the nested event is recorded", evt ~= nil and evt.totalMs == 4)
+	check("the outer probe subtracts the nested event", outer and outer.totalMs == 10 and outer.selfMs == 6, outer and outer.selfMs)
+	Profiler:Stop(true)
+	C_AddOnProfiler.MeasureCall = nil
+end
+
 print(("%d passed, %d failed"):format(passed, failed))
 os.exit(failed == 0 and 0 or 1)

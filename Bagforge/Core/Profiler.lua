@@ -315,17 +315,17 @@ local function InstallEventProbe()
 		if not active then
 			return orig(self, event, ...)
 		end
-		-- Events are always top level, so reset the stack here. A probe that threw
-		-- would otherwise leave a stale depth behind it.
-		depth = 0
-		wipe(childMs)
-		depth = 1
-		childMs[1] = 0
+		-- An event can fire from inside a probed call (ITEM_LOCK_CHANGED arrives
+		-- during C_Container.SortBags), so it nests like any other probe. Forcing
+		-- depth to 1 here used to wipe the outer probe's child time.
+		local myDepth = depth + 1
+		depth = myDepth
+		childMs[myDepth] = 0
 		local p = GetProbe("event:" .. event)
 		if measure then
-			return FinishNative(p, 1, measure(orig, self, event, ...))
+			return FinishNative(p, myDepth, measure(orig, self, event, ...))
 		end
-		return Finish(p, 1, collectgarbage("count"), debugprofilestop(), orig(self, event, ...))
+		return Finish(p, myDepth, collectgarbage("count"), debugprofilestop(), orig(self, event, ...))
 	end
 	eventFrame:SetScript("OnEvent", eventWrapper)
 	return true
@@ -353,6 +353,7 @@ local usedNative = false -- whether the last run measured through MeasureCall
 
 local function Snapshot()
 	local rows = {}
+	local seconds = math.max(Elapsed(), 0.001)
 	for _, p in pairs(probes) do
 		if p.calls > 0 then
 			rows[#rows + 1] = {
@@ -365,7 +366,7 @@ local function Snapshot()
 				slow = p.slow,
 				allocKB = p.alloc,
 				retainedKB = usedNative and (p.alloc - (p.freed or 0)) or nil,
-				callsPerSec = p.calls / math.max(Elapsed(), 0.001),
+				callsPerSec = p.calls / seconds,
 				peakStack = p.peakStack,
 			}
 		end
@@ -399,6 +400,21 @@ end
 local store = {}
 local overheadUs -- cost of one probe wrapper, measured at Start
 
+-- Saved variables are written on every reload, so keep only the heaviest rows.
+local MAX_PERSISTED_ROWS = 100
+
+local function PersistedRows()
+	local rows = store.probes
+	if not rows or #rows <= MAX_PERSISTED_ROWS then
+		return rows
+	end
+	local kept = {}
+	for i = 1, MAX_PERSISTED_ROWS do
+		kept[i] = rows[i]
+	end
+	return kept
+end
+
 local function Persist()
 	local root = _G.BagforgeDB
 	if not root then
@@ -415,7 +431,7 @@ local function Persist()
 		seconds = Elapsed(),
 		probeOverheadUs = overheadUs,
 		engineMeasured = usedNative,
-		probes = store.probes,
+		probes = PersistedRows(),
 		bench = store.bench,
 		native = store.native,
 		memory = store.memory,
@@ -568,7 +584,7 @@ function Profiler:Stop(quiet)
 	for i = #patched, 1, -1 do
 		local p = patched[i]
 		-- Only restore what is still our wrapper, never clobber a later hook.
-		if rawget(p[1], p[2]) == p[3] or rawget(p[1], p[2]) == p[4] then
+		if rawget(p[1], p[2]) == p[4] then
 			p[1][p[2]] = p[3]
 		end
 		patched[i] = nil
@@ -806,7 +822,7 @@ function Profiler:Memory(runGC)
 	local bank = ns:GetModule("Bank")
 	if bank and bank.views then
 		for i = 1, #bank.views do
-			mem.scanners[#mem.scanners + 1] = ScannerStats(tostring(bank.views[i].name or ("bank" .. i)),
+			mem.scanners[#mem.scanners + 1] = ScannerStats(tostring(bank.views[i].name or bank.views[i].frameName or ("bank" .. i)),
 				bank.views[i].scanner)
 		end
 	end

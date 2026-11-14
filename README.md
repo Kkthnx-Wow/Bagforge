@@ -27,6 +27,10 @@ Install from [CurseForge](https://www.curseforge.com/wow/addons/bagforge), or do
 3. Toggle category filters with `/bf filter <name> on|off`, or turn them all off for one flat bag.
 4. Open settings with `/bf config` (or Esc, Options, AddOns, Bagforge).
 
+## Profiling
+
+`/bf profile` opens a sortable table of where Bagforge spends time and memory. Press Start, use your bags and bank, then read the heaviest functions. Hover a row for its slowest call and where it came from. `/bf profile bench` times fixed workloads on your real bags, and `/bf diag` checks that the scanner indexes are consistent. Nothing is measured while the profiler is stopped.
+
 ## Support the work
 
 Free forever. If it saved you time, chip in:

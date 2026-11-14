@@ -957,8 +957,6 @@ end
 -- Font strings
 -- ---------------------------------------------------------------------------
 
---- Create an OUTLINE font string on `parent` using a stock game font as the
---- base, then resize it. Keeps every label in the addon consistent.
 -- Lock state of one bag slot. C_Item.IsLocked answers with a bare boolean, where
 -- GetContainerItemInfo builds a 15-field table per call, and ITEM_LOCK_CHANGED
 -- fires in bursts while dragging or sorting. One shared ItemLocation is repointed
@@ -988,6 +986,8 @@ function F.IsSlotLocked(bag, slot)
 	return info ~= nil and F.SafeBool(info.isLocked) == true
 end
 
+--- Create an OUTLINE font string on `parent` using a stock game font as the
+--- base, then resize it. Keeps every label in the addon consistent.
 function F.CreateFS(parent, size, text, layer)
 	local fs = parent:CreateFontString(nil, layer or "OVERLAY", "GameFontNormal")
 	local font, _, flags = fs:GetFont()

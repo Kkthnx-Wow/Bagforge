@@ -135,6 +135,7 @@ local reqLevelCache = {}
 local classReqPattern
 local playerClassMale
 local playerClassFemale
+local playerClassToken
 local INVTYPE_WEAPONOFFHAND = "INVTYPE_WEAPONOFFHAND"
 
 local function EnsureClassReqPattern()
@@ -145,6 +146,7 @@ local function EnsureClassReqPattern()
 		classReqPattern = ITEM_CLASSES_ALLOWED:format("(.*)")
 	end
 	local classToken = UnitClassBase("player")
+	playerClassToken = classToken
 	if classToken then
 		playerClassMale = LOCALIZED_CLASS_NAMES_MALE and LOCALIZED_CLASS_NAMES_MALE[classToken]
 		playerClassFemale = LOCALIZED_CLASS_NAMES_FEMALE and LOCALIZED_CLASS_NAMES_FEMALE[classToken]
@@ -214,6 +216,44 @@ local function IsProficiencyUnusable(key)
 	return false
 end
 
+-- The "Classes:" restriction is a fixed property of an item for a given class, but
+-- finding it costs a full item tooltip (about 19KB and 40us) per unique equippable
+-- item, and the session cache above starts empty on every reload. So the answer is
+-- also kept in the account saved variables, per class token and tied to the game
+-- build so a patch that changes restrictions starts clean. Bounded, and only
+-- written when the tooltip actually produced lines.
+local CLASS_REQ_LIMIT = 6000
+
+local function PersistedClassReq()
+	local global = ns.global
+	if not (global and playerClassToken) then
+		return nil
+	end
+	local _, _, _, build = GetBuildInfo()
+	local root = global.classReq
+	if type(root) ~= "table" or root.build ~= build then
+		root = { build = build }
+		global.classReq = root
+	end
+	local perClass = root[playerClassToken]
+	if type(perClass) ~= "table" then
+		perClass = { count = 0 }
+		root[playerClassToken] = perClass
+	end
+	return perClass
+end
+
+local function PersistClassReq(store, itemID, result)
+	if store[itemID] == nil then
+		if (store.count or 0) >= CLASS_REQ_LIMIT then
+			wipe(store)
+			store.count = 0
+		end
+		store.count = (store.count or 0) + 1
+	end
+	store[itemID] = result
+end
+
 --- Scan tooltip for ITEM_CLASSES_ALLOWED (not red stat lines).
 local function HasClassRequirementMismatch(itemID)
 	if not itemID then
@@ -225,6 +265,14 @@ local function HasClassRequirementMismatch(itemID)
 	end
 
 	EnsureClassReqPattern()
+	local store = PersistedClassReq()
+	if store then
+		local saved = store[itemID]
+		if saved ~= nil then
+			classReqCache[itemID] = saved
+			return saved
+		end
+	end
 	if not (classReqPattern and (playerClassMale or playerClassFemale) and C_TooltipInfo and C_TooltipInfo.GetItemByID) then
 		classReqCache[itemID] = false
 		return false
@@ -232,6 +280,7 @@ local function HasClassRequirementMismatch(itemID)
 
 	local result = false
 	local ok, data = pcall(C_TooltipInfo.GetItemByID, itemID)
+	local hadLines = ok and data and data.lines and true or false
 	if ok and data and data.lines then
 		local lines = data.lines
 		for i = #lines - 1, 5, -1 do
@@ -250,6 +299,9 @@ local function HasClassRequirementMismatch(itemID)
 	end
 
 	classReqCache[itemID] = result
+	if hadLines and store then
+		PersistClassReq(store, itemID, result)
+	end
 	return result
 end
 

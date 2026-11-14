@@ -743,5 +743,70 @@ do
 	C_Item.GetCurrentItemLevel, C_Item.DoesItemExist = origLevel, origExists
 end
 
+-- 22. the class restriction answer survives a reload through the saved variables
+do
+	local info = ns:GetModule("ItemInfo")
+	local fetches = 0
+	local lines = { {}, {}, {}, {}, {}, { leftText = "Classes: Warrior" }, {} }
+	C_TooltipInfo.GetItemByID = function() fetches = fetches + 1 return { lines = lines } end
+	ITEM_CLASSES_ALLOWED = "Classes: %s"
+	LOCALIZED_CLASS_NAMES_MALE = { MAGE = "Mage" }
+	LOCALIZED_CLASS_NAMES_FEMALE = { MAGE = "Mage" }
+	ns.global.classReq = nil
+	info:InvalidateUnusableCaches()
+	local helm = { itemID = 102, hyperlink = link(102), classID = 4, subClassID = 1, itemEquipLoc = "INVTYPE_HEAD" }
+	check("restricted gear reads as unusable", info:IsUnusable(helm) == true)
+	check("the tooltip was read once", fetches == 1, fetches)
+	check("the answer is saved per class", ns.global.classReq and ns.global.classReq.MAGE and ns.global.classReq.MAGE[102] == true)
+	info:InvalidateUnusableCaches() -- what a reload does to the session caches
+	check("a fresh session reuses the saved answer", info:IsUnusable(helm) == true and fetches == 1, fetches)
+
+	-- a patch that changes the build starts clean
+	local origBuild = GetBuildInfo
+	GetBuildInfo = function() return "12.1.6", "70999", "x", 120106 end
+	info:InvalidateUnusableCaches()
+	info:IsUnusable(helm)
+	check("a new game build rereads the tooltip", fetches == 2, fetches)
+	GetBuildInfo = origBuild
+
+	-- no lines, no answer worth keeping
+	fetches = 0
+	ns.global.classReq = nil
+	lines = nil
+	C_TooltipInfo.GetItemByID = function() fetches = fetches + 1 return nil end
+	info:InvalidateUnusableCaches()
+	info:IsUnusable({ itemID = 105, hyperlink = link(105), classID = 4, subClassID = 0, itemEquipLoc = "INVTYPE_FINGER" })
+	local saved = ns.global.classReq and ns.global.classReq.MAGE and ns.global.classReq.MAGE[105]
+	check("a failed tooltip read is not saved", saved == nil, tostring(saved))
+end
+
+-- 23. Reset keeps live probes counting
+do
+	local Profiler = ns.Profiler
+	local t = { run = function() return 1 end }
+	Profiler:Start()
+	Profiler:Track(t, "run", "reset.probe")
+	t.run()
+	t.run()
+	Profiler:Reset()
+	local rows = Profiler:Report(true)
+	local found
+	for i = 1, #rows do
+		if rows[i].label == "reset.probe" then
+			found = rows[i]
+		end
+	end
+	check("a reset clears the counts", found == nil)
+	t.run()
+	rows = Profiler:Report(true)
+	for i = 1, #rows do
+		if rows[i].label == "reset.probe" then
+			found = rows[i]
+		end
+	end
+	check("a probe keeps counting after a reset", found and found.calls == 1, found and found.calls)
+	Profiler:Stop(true)
+end
+
 print(("%d passed, %d failed"):format(passed, failed))
 os.exit(failed == 0 and 0 or 1)

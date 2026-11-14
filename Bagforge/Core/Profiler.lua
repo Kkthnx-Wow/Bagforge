@@ -491,7 +491,12 @@ function Profiler:IsActive()
 end
 
 function Profiler:Reset()
-	wipe(probes)
+	-- Zero the records in place. Every installed wrapper holds its own record, so
+	-- emptying the map would leave them counting into tables nothing reads.
+	for _, p in pairs(probes) do
+		p.calls, p.total, p.self, p.peak, p.slow, p.alloc, p.freed = 0, 0, 0, 0, 0, 0, 0
+		p.peakStack = nil
+	end
 	depth = 0
 	wipe(childMs)
 	startedAt = GetTimePreciseSec and GetTimePreciseSec() or GetTime()

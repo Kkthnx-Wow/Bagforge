@@ -38,6 +38,10 @@ local ITEM_BIND = Enum and Enum.ItemBind
 
 local itemLevelCache = {}
 
+-- One ItemLocation repointed per call. Item:CreateFromBagAndSlot builds a mixin
+-- table plus a location per slot, and a scan asks for every equippable slot.
+local levelLocation = ItemLocation and ItemLocation.CreateEmpty and ItemLocation:CreateEmpty()
+
 ns:RegisterDefaults({
 	itemInfo = {
 		enable = true,
@@ -338,6 +342,37 @@ local function IsEquippableGear(entry)
 	return classID == Enum.ItemClass.Weapon or classID == Enum.ItemClass.Armor
 end
 
+-- One bag tooltip per slot.
+--   GetItemLevel and GetBindLabel both need the same C_TooltipInfo.GetBagItem
+--   blob. Building it separately for each was the single largest cost of a full
+--   scan (two pcall + table builds per unbound gear slot). The blob is memoised
+--   on the entry, which the scanner pools per slot, and the scanner clears the
+--   field whenever it repopulates that slot so a reused entry never sees a
+--   previous item's tooltip.
+--   `false` = looked up and unavailable, distinct from nil = not looked up yet.
+local function FetchBagTooltip(entry)
+	local memo = entry._tooltipData
+	if memo ~= nil then
+		return memo or nil
+	end
+	local data = false
+	if entry.bag and entry.slot and C_TooltipInfo and C_TooltipInfo.GetBagItem then
+		-- Counted so /bf diag can report how many tooltip builds a scan really
+		-- costs; this API is the most expensive call in the per-slot path.
+		ItemInfo.tooltipFetches = (ItemInfo.tooltipFetches or 0) + 1
+		local ok, blob = pcall(C_TooltipInfo.GetBagItem, entry.bag, entry.slot)
+		if ok and blob and blob.lines then
+			data = blob
+		end
+	end
+	entry._tooltipData = data
+	return data or nil
+end
+
+function ItemInfo:ResetTooltipStats()
+	self.tooltipFetches = 0
+end
+
 function ItemInfo:GetItemLevel(entry)
 	if not entry or not IsEquippableGear(entry) then
 		return nil
@@ -352,12 +387,46 @@ function ItemInfo:GetItemLevel(entry)
 		end
 	end
 
-	-- Match the game tooltip (timewarped/scaled gear shows the same ilvl the player sees).
+	-- Cheap sources first. Item:GetCurrentItemLevel is one of the two sources the
+	-- 12.0+ ilvl bug leaves reliable (the other is the tooltip), and it costs no
+	-- tooltip build - so ask it before falling back to constructing one. The
+	-- tooltip stays for slots this can't answer (item data not loaded yet), which
+	-- keeps the displayed value identical, including timewarped/scaled gear.
+	-- ItemMixin:GetCurrentItemLevel is C_Item.GetCurrentItemLevel(itemLocation)
+	-- for a bag item (Blizzard_ObjectAPI Item.lua), so call it on a shared
+	-- location instead of building a mixin per slot. Item stays the fallback.
+	if entry.bag and entry.slot and C_Item.GetCurrentItemLevel and C_Item.DoesItemExist and levelLocation then
+		levelLocation:SetBagAndSlot(entry.bag, entry.slot)
+		if C_Item.DoesItemExist(levelLocation) then
+			local ok, level = pcall(C_Item.GetCurrentItemLevel, levelLocation)
+			if ok and level and level > 0 then
+				if cacheKey then
+					F.CacheSet(itemLevelCache, cacheKey, level)
+				end
+				return level
+			end
+		end
+	else
+		local Item = _G["Item"]
+		if entry.bag and entry.slot and Item then
+			local item = Item:CreateFromBagAndSlot(entry.bag, entry.slot)
+			if item and item.IsValid and item:IsValid() and item.GetCurrentItemLevel then
+				local ok, level = pcall(item.GetCurrentItemLevel, item)
+				if ok and level and level > 0 then
+					if cacheKey then
+						F.CacheSet(itemLevelCache, cacheKey, level)
+					end
+					return level
+				end
+			end
+		end
+	end
+
 	-- WoWUIBugs #828: GetDetailedItemLevelInfo and GetItemInfo.itemLevel can return
-	-- wrong values in 12.0+, tooltip + Item:GetCurrentItemLevel are reliable.
-	if entry.bag and entry.slot and C_TooltipInfo and C_TooltipInfo.GetBagItem and LINE_ITEM_LEVEL then
-		local ok, data = pcall(C_TooltipInfo.GetBagItem, entry.bag, entry.slot)
-		if ok and data and data.lines then
+	-- wrong values in 12.0+, so the tooltip (last resort) is the authoritative one.
+	if LINE_ITEM_LEVEL then
+		local data = FetchBagTooltip(entry)
+		if data then
 			for i = 2, #data.lines do
 				local line = data.lines[i]
 				if line.type == LINE_ITEM_LEVEL then
@@ -369,20 +438,6 @@ function ItemInfo:GetItemLevel(entry)
 						return level
 					end
 				end
-			end
-		end
-	end
-
-	local Item = _G["Item"]
-	if entry.bag and entry.slot and Item then
-		local item = Item:CreateFromBagAndSlot(entry.bag, entry.slot)
-		if item and item.IsValid and item:IsValid() and item.GetCurrentItemLevel then
-			local ok, level = pcall(item.GetCurrentItemLevel, item)
-			if ok and level and level > 0 then
-				if cacheKey then
-					F.CacheSet(itemLevelCache, cacheKey, level)
-				end
-				return level
 			end
 		end
 	end
@@ -405,27 +460,53 @@ end
 -- not resolved yet, e.g. item data not loaded).
 local bindLabelCache = {}
 
+--- Second return is true when the answer is definitive, including "no binding at
+--- all". The scan stores it as entry.bindResolved so the warbound filter can tell
+--- an unbound item from an item whose data has not loaded yet.
 function ItemInfo:GetBindLabel(entry)
 	if not entry then
 		return nil
 	end
 	if entry.isBound == true then
-		return nil
+		return nil, true
 	end
 
 	local id = entry.itemID
 	if id then
 		local cached = bindLabelCache[id]
 		if cached ~= nil then
-			return cached or nil
+			return cached or nil, true
 		end
 	end
 
 	local label, resolved
 
-	if entry.bag and entry.slot and C_TooltipInfo and C_TooltipInfo.GetBagItem and BIND then
-		local ok, data = pcall(C_TooltipInfo.GetBagItem, entry.bag, entry.slot)
-		if ok and data and data.lines then
+	-- Cheap source first: bindType is already loaded for anything the scan has
+	-- touched, whereas the tooltip costs ~0.2ms to build. A warband bank is full
+	-- of unbound items, so asking the tooltip first meant one build per slot. The
+	-- tooltip below stays as the fallback for what bindType can't express, so the
+	-- label shown is unchanged.
+	if ITEM_BIND and C_Item and C_Item.GetItemInfo then
+		local info = (entry.hyperlink and F.GetItemInfoRecord(entry.hyperlink))
+			or (entry.itemID and F.GetItemInfoRecord(entry.itemID))
+		local bindType = info and info.bindType
+		if bindType ~= nil then
+			resolved = true
+			if bindType == ITEM_BIND.OnEquip then
+				label = "BoE"
+			elseif bindType == ITEM_BIND.OnUse then
+				label = "BoU"
+			elseif bindType == ITEM_BIND.ToWoWAccount or bindType == ITEM_BIND.ToBnetAccount then
+				label = "BoA"
+			elseif bindType == ITEM_BIND.ToBnetAccountUntilEquipped then
+				label = "WuE"
+			end
+		end
+	end
+
+	if not resolved and BIND then
+		local data = FetchBagTooltip(entry)
+		if data then
 			for i = 2, #data.lines do
 				local line = data.lines[i]
 				if line.type == LINE_ITEM_BINDING then
@@ -446,30 +527,12 @@ function ItemInfo:GetBindLabel(entry)
 		end
 	end
 
-	if not resolved and ITEM_BIND and C_Item and C_Item.GetItemInfo then
-		local info = (entry.hyperlink and F.GetItemInfoRecord(entry.hyperlink))
-			or (entry.itemID and F.GetItemInfoRecord(entry.itemID))
-		local bindType = info and info.bindType
-		if bindType ~= nil then
-			resolved = true
-			if bindType == ITEM_BIND.OnEquip then
-				label = "BoE"
-			elseif bindType == ITEM_BIND.OnUse then
-				label = "BoU"
-			elseif bindType == ITEM_BIND.ToWoWAccount or bindType == ITEM_BIND.ToBnetAccount then
-				label = "BoA"
-			elseif bindType == ITEM_BIND.ToBnetAccountUntilEquipped then
-				label = "WuE"
-			end
-		end
-	end
-
 	-- Only memoise a definitive answer, if neither source had data yet (item not
 	-- cached), leave it unresolved so a later rescan can fill it in.
 	if resolved and id then
 		F.CacheSet(bindLabelCache, id, label or false, 600)
 	end
-	return label
+	return label, resolved and true or false
 end
 
 -- ---------------------------------------------------------------------------

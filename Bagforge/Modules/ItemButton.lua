@@ -192,34 +192,38 @@ end
 -- custom 0.75 dim on top and icons went pitch black.
 
 -- `entry` is one slot record from Items:GetSlots().
-local function SnapshotButtonPaint(entry)
-	return {
-		icon = entry.icon,
-		count = entry.count,
-		quality = entry.quality,
-		isLocked = entry.isLocked,
-		hyperlink = entry.hyperlink,
-		isFiltered = entry.isFiltered,
-		quest = entry.quest,
-		questID = entry.questID,
-		isActiveQuest = entry.isActiveQuest,
-		readable = entry.readable,
-		showIlvl = entry.showIlvl,
-		ilvl = entry.ilvl,
-		showBindLabel = entry.showBindLabel,
-		isUpgrade = entry.isUpgrade,
-		isUnusable = entry.isUnusable,
-		showGreyJunk = entry.showGreyJunk,
-		itemID = entry.itemID,
-		isNewItem = entry.isNewItem,
-	}
+-- Filled into the button's own table (`snap`) so a repaint does not allocate a
+-- new 18-field table. The button clears _paintSnap, not the table, to mean "no
+-- snapshot", so the table is simply refilled the next time it paints.
+local function SnapshotButtonPaint(entry, snap)
+	snap.icon = entry.icon
+	snap.count = entry.count
+	snap.quality = entry.quality
+	snap.isLocked = entry.isLocked
+	snap.hyperlink = entry.hyperlink
+	snap.isFiltered = entry.isFiltered
+	snap.quest = entry.quest
+	snap.questID = entry.questID
+	snap.isActiveQuest = entry.isActiveQuest
+	snap.readable = entry.readable
+	snap.showIlvl = entry.showIlvl
+	snap.ilvl = entry.ilvl
+	snap.showBindLabel = entry.showBindLabel
+	snap.isUpgrade = entry.isUpgrade
+	snap.isUnusable = entry.isUnusable
+	snap.showGreyJunk = entry.showGreyJunk
+	snap.itemID = entry.itemID
+	snap.isNewItem = entry.isNewItem
+	return snap
 end
 
 local function ButtonPaintUnchanged(snap, entry)
+	-- isLocked is deliberately not compared: a lock change only moves the
+	-- desaturation and the unusable tint, which Button_SetItem patches directly.
+	-- Comparing it sent every ITEM_LOCK_CHANGED through a full repaint.
 	return snap.icon == entry.icon
 		and snap.count == entry.count
 		and snap.quality == entry.quality
-		and snap.isLocked == entry.isLocked
 		and snap.hyperlink == entry.hyperlink
 		and snap.isFiltered == entry.isFiltered
 		and snap.quest == entry.quest
@@ -251,6 +255,12 @@ local function Button_SetItem(self, entry)
 
 	local snap = self._paintSnap
 	if snap and ButtonPaintUnchanged(snap, entry) then
+		local locked = entry.isLocked
+		if snap.isLocked ~= locked then
+			snap.isLocked = locked
+			SetItemButtonDesaturated(self.button, locked or entry.showGreyJunk or false)
+			ApplyUnusableTint(self, entry)
+		end
 		return
 	end
 
@@ -431,7 +441,12 @@ local function Button_SetItem(self, entry)
 	end
 
 	self.button:Show()
-	self._paintSnap = SnapshotButtonPaint(entry)
+	local store = self._paintStore
+	if not store then
+		store = {}
+		self._paintStore = store
+	end
+	self._paintSnap = SnapshotButtonPaint(entry, store)
 end
 
 local function Button_Clear(self)
@@ -462,14 +477,13 @@ local function Button_Clear(self)
 	if self.button.UpdateJunkItem then
 		self.button:UpdateJunkItem(false, false)
 	end
-	if self.button.UpdateCooldown then
-		self.button:UpdateCooldown(false)
-	end
+	-- Clear only runs from ResetButton, right before the pool hides the button.
+	-- Cooldown and item-context matching are recomputed by SetItemEntry on reuse
+	-- (and by Blizzard's own OnShow), so refreshing them on a button about to be
+	-- hidden was pure cost: about a third of the time a bank close spent here.
+	-- The search flag is still reset so a stale "does not match" cannot survive.
 	if self.button.SetMatchesSearch then
 		self.button:SetMatchesSearch(true)
-	end
-	if self.button.UpdateItemContextMatching then
-		self.button:UpdateItemContextMatching()
 	end
 	if self.button.SetReadable then
 		self.button:SetReadable(false)
@@ -977,11 +991,7 @@ function ItemButton:RefreshLock(bag, slot)
 	if not (parent and parent.button) then
 		return
 	end
-	local locked = false
-	if bag and slot and C_Container.GetContainerItemInfo then
-		local info = C_Container.GetContainerItemInfo(bag, slot)
-		locked = F.SafeBool(info and info.isLocked) == true
-	end
+	local locked = F.IsSlotLocked(bag, slot)
 	if parent.entry then
 		parent.entry.isLocked = locked
 	end

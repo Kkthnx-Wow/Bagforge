@@ -77,6 +77,7 @@ function M.install(opts)
 	local now = 100
 	G.GetTime = function() return now end
 	G.GetTimePreciseSec = function() return now end
+	G.debugprofilestop = function() return os.clock() * 1000 end
 	M.advance = function(dt) now = now + dt end
 
 	G.CreateFrame = function(_, name) local f = newFrame(name) if name then G[name] = f end return f end

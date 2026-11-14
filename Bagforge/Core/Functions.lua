@@ -959,6 +959,35 @@ end
 
 --- Create an OUTLINE font string on `parent` using a stock game font as the
 --- base, then resize it. Keeps every label in the addon consistent.
+-- Lock state of one bag slot. C_Item.IsLocked answers with a bare boolean, where
+-- GetContainerItemInfo builds a 15-field table per call, and ITEM_LOCK_CHANGED
+-- fires in bursts while dragging or sorting. One shared ItemLocation is repointed
+-- per call, so this allocates nothing. Falls back to the table API when the
+-- client lacks C_Item.IsLocked.
+local lockLocation = ItemLocation and ItemLocation.CreateEmpty and ItemLocation:CreateEmpty()
+
+function F.IsSlotLocked(bag, slot)
+	if not (bag and slot) then
+		return false
+	end
+	local isLocked = C_Item and C_Item.IsLocked
+	if isLocked and lockLocation and C_Item.DoesItemExist then
+		lockLocation:SetBagAndSlot(bag, slot)
+		-- An empty slot is not a valid item location and IsLocked raises on it, and
+		-- lock events do arrive for slots that just emptied (sort, split, move).
+		if not C_Item.DoesItemExist(lockLocation) then
+			return false
+		end
+		local ok, locked = pcall(isLocked, lockLocation)
+		if ok then
+			return F.SafeBool(locked) == true
+		end
+		-- A location the client refuses still gets an answer from the table API.
+	end
+	local info = C_Container.GetContainerItemInfo(bag, slot)
+	return info ~= nil and F.SafeBool(info.isLocked) == true
+end
+
 function F.CreateFS(parent, size, text, layer)
 	local fs = parent:CreateFontString(nil, layer or "OVERLAY", "GameFontNormal")
 	local font, _, flags = fs:GetFont()

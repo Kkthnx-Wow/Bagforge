@@ -46,6 +46,8 @@ ns.BankView = BankView
 
 local View = {}
 View.__index = View
+-- Exposed so the profiler (Core/Profiler.lua) can time the shared view methods.
+BankView.View = View
 ns.ContainerWindow.Apply(View)
 
 local function TabSlot_OnEnter(button)

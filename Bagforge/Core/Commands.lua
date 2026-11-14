@@ -31,6 +31,8 @@ local function ShowHelp()
 	F.Print("  " .. L["junk <add|remove|clear|list> - Manage custom junk"])
 	F.Print("  " .. L["testextslots [on|off] - Preview authenticator backpack slots"])
 	F.Print("  " .. L["debugmoney [on|off|dump] - Warband bank gold transfer diagnostics"])
+	F.Print("  " .. L["diag [clear] - Snapshot live scanner index state to SavedVariables"])
+	F.Print("  " .. L["profile [start|stop|report|bench|native|mem|sources] - Profile the addon"])
 end
 
 local exactCommands = {
@@ -220,6 +222,17 @@ local prefixCommands = {
 			F.DebugBankMoneyDumpAll()
 		end
 	end,
+	profile = function(value)
+		ns.Profiler:HandleCommand(value)
+	end,
+	diag = function(value)
+		local mode = (value or ""):lower():match("^(%S*)")
+		if mode == "clear" then
+			ns:ClearScannerDiagnostics()
+		else
+			ns:RunScannerDiagnostics()
+		end
+	end,
 }
 
 local prefixAliases = {
@@ -229,6 +242,7 @@ local prefixAliases = {
 	category = "cat",
 	testextended = "testextslots",
 	testslots = "testextslots",
+	diagnostics = "diag",
 }
 for alias, target in pairs(prefixAliases) do
 	prefixCommands[alias] = function(value)

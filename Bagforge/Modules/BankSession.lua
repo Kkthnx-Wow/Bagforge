@@ -51,10 +51,15 @@ function BankSession:EnsureBankPanel(view)
 	if panel.Header then
 		panel.Header:Hide()
 	end
-	panel:Show()
-	if panel.SetBankType and view.bankType then
-		panel:SetBankType(view.bankType)
+	-- Set the type while the panel is still hidden and only when it differs.
+	-- SetBankType on a shown panel runs a full Reset (re-fetch tabs, regenerate
+	-- every slot button), and Show runs one too, so the old order did it twice
+	-- and every repeat call did it again for nothing.
+	local wanted = view.bankType
+	if wanted and panel.SetBankType and (not panel.GetActiveBankType or panel:GetActiveBankType() ~= wanted) then
+		panel:SetBankType(wanted)
 	end
+	panel:Show()
 	if view.ConfigureSecureBankButtons then
 		view:ConfigureSecureBankButtons()
 	end
@@ -72,10 +77,25 @@ function BankSession:IsBankOpen()
 	return frame and frame:IsShown()
 end
 
-function BankSession:RefreshItemContext()
+-- Every open path asks for this (show, the frame hook, a zero-delay retry, the
+-- backpack draw), and each one walks every item button. Coalesce them: buttons
+-- that were repainted already carry the right context, so one trailing pass is
+-- enough.
+local itemContextPending = false
+
+local function TriggerItemContext()
+	itemContextPending = false
 	if ItemButtonUtil and ItemButtonUtil.TriggerEvent and ItemButtonUtil.Event then
 		ItemButtonUtil.TriggerEvent(ItemButtonUtil.Event.ItemContextChanged)
 	end
+end
+
+function BankSession:RefreshItemContext()
+	if itemContextPending then
+		return
+	end
+	itemContextPending = true
+	C_Timer.After(0, TriggerItemContext)
 end
 
 function BankSession:InstallBankFrameHooks(bankModule)

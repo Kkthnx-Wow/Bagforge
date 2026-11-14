@@ -225,8 +225,8 @@ function Recent:ClearBackpack()
 	for _, bag in ipairs(C.BACKPACK_BAGS) do
 		local numSlots = C_Container.GetContainerNumSlots(bag) or 0
 		for slot = 1, numSlots do
-			local info = C_Container.GetContainerItemInfo(bag, slot)
-			if info and info.iconFileID then
+			-- Occupied check by item ID: GetContainerItemInfo builds a table per slot.
+			if C_Container.GetContainerItemID(bag, slot) then
 				RemoveBlizzardNewItem(bag, slot)
 			end
 		end

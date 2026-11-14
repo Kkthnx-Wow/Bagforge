@@ -31,6 +31,7 @@ read_globals = {
 	"strsplit", "strjoin", "strtrim", "strmatch", "strfind", "gsub", "format",
 	"hooksecurefunc", "issecurevariable", "securecall", "geterrorhandler",
 	"GetTime", "GetTimePreciseSec", "debugprofilestop", "time", "date",
+	"GetCVar", "C_AddOnProfiler", "C_CVar", "debugstack",
 	"CreateFrame", "UIParent", "GameTooltip", "GameFontNormal", "GameFontHighlight",
 	"CreateColor", "ColorMixin", "CreateTextureMarkup", "CreateAtlasMarkup",
 	"EnumerateFrames", "PlaySound", "IsLoggedIn", "InCombatLockdown", "IsShiftKeyDown",

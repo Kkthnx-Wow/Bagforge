@@ -433,5 +433,315 @@ do
 	flagged[1] = nil
 end
 
+-- 14. profiler: probes install and restore, self time never exceeds total, errors pass through
+do
+	local Profiler = ns.Profiler
+	check("profiler loaded", Profiler ~= nil)
+	local meta = getmetatable(scanner).__index
+	local origBuild, origRun = meta._Build, meta.Run
+	local frame = BagforgeEventFrame
+	local origOnEvent = frame:GetScript("OnEvent")
+
+	Profiler:Start()
+	check("start installs the scan probes", meta._Build ~= origBuild and meta.Run ~= origRun)
+	check("event dispatcher is wrapped", frame:GetScript("OnEvent") ~= origOnEvent)
+	check("profiler reports active", Profiler:IsActive() == true)
+
+	Items:Scan()
+	env.flushTimers()
+	fire("BAG_UPDATE", 0)
+	fire("BAG_UPDATE_DELAYED")
+	env.flushTimers()
+	local rows = Profiler:Report(true)
+	local byLabel = {}
+	for i = 1, #rows do
+		byLabel[rows[i].label] = rows[i]
+	end
+	check("Scan:Run recorded", byLabel["Scan:Run"] and byLabel["Scan:Run"].calls >= 1)
+	check("_Build recorded under Run", byLabel["Scan:_Build"] and byLabel["Scan:_Build"].calls >= 1)
+	check("event probe recorded", byLabel["event:BAG_UPDATE"] and byLabel["event:BAG_UPDATE"].calls == 1)
+	local sane = true
+	for i = 1, #rows do
+		if rows[i].selfMs > rows[i].totalMs + 1e-6 or rows[i].selfMs < 0 then
+			sane = false
+		end
+	end
+	check("self time never exceeds total time", sane)
+	check("parent self time excludes the child", byLabel["Scan:Run"].selfMs <= byLabel["Scan:Run"].totalMs)
+
+	Profiler:Stop(true)
+	check("stop restores scan methods", meta._Build == origBuild and meta.Run == origRun)
+	check("stop restores the event script", frame:GetScript("OnEvent") == origOnEvent)
+	check("profiler reports stopped", Profiler:IsActive() == false)
+	check("report persisted for after /reload", BagforgeDB.profile and #BagforgeDB.profile.probes > 0)
+
+	-- a wrapper must pass values and errors through untouched, and a throw must
+	-- not leave the call stack depth stuck
+	local target = {
+		add = function(a, b) return a + b, "ok" end,
+		boom = function() error("kaboom", 0) end,
+	}
+	Profiler:Start()
+	Profiler:Track(target, "add", "t.add")
+	Profiler:Track(target, "boom", "t.boom")
+	local sum, tag = target.add(2, 3)
+	check("wrapper returns every value", sum == 5 and tag == "ok")
+	local ok, err = pcall(target.boom)
+	check("wrapper lets errors through", ok == false and err == "kaboom", err)
+	Profiler:Stop(true)
+	check("track restores the original", target.add ~= nil and select(1, target.add(1, 1)) == 2)
+
+	-- Track must refuse a non-function and a double install
+	Profiler:Start()
+	check("track skips non-functions", Profiler:Track(target, "missing", "x") == false)
+	check("track refuses to wrap twice", Profiler:Track(target, "add", "t.add") == true and Profiler:Track(target, "add", "t.add") == false)
+	Profiler:Stop(true)
+
+	-- read-only reporters must not throw with the API absent or stubbed
+	check("native reader reports a missing API", select(1, Profiler:ReadNative()) == nil or true)
+	C_AddOnProfiler = {
+		GetAddOnMetric = function(name, metric) return name == "Bagforge" and metric + 0.5 or 0 end,
+		GetOverallMetric = function(metric) return metric + 1 end,
+		GetTopKAddOnsForMetric = function() return { { addOnName = "Bagforge", metricValue = 1.5 } } end,
+		IsEnabled = function() return true end,
+	}
+	Enum.AddOnProfilerMetric = { SessionAverageTime = 0, RecentAverageTime = 1, PeakTime = 4, CountTimeOver1Ms = 5, CountTimeOver5Ms = 6, CountTimeOver10Ms = 7, CountTimeOver50Ms = 8, CountTimeOver100Ms = 9 }
+	local native = Profiler:ReadNative()
+	check("native reader returns metrics", native and native.addon.PeakTime == 4.5 and native.overall.PeakTime == 5, native and native.addon.PeakTime)
+	check("native reader returns top addons", native and #native.top == 1 and native.top[1].name == "Bagforge")
+	check("native reader flags a live API", native and native.allZero == false)
+	Profiler:PrintNative()
+	Profiler:PrintSources()
+	Profiler:Memory(false)
+	check("memory snapshot stored", BagforgeDB.profile.memory ~= nil)
+
+	-- engine MeasureCall path: exact bytes, values pass through, stack kept for slow calls
+	local measured = 0
+	C_AddOnProfiler.MeasureCall = function(fn, ...)
+		measured = measured + 1
+		return { elapsedMilliseconds = 2, elapsedTicks = 2, allocatedBytes = 2048, deallocatedBytes = 1024 }, fn(...)
+	end
+	local nt = { add = function(a, b) return a + b, "ok" end }
+	Profiler:Start()
+	Profiler:Track(nt, "add", "n.add")
+	local nsum, ntag = nt.add(4, 5)
+	check("native path returns every value", nsum == 9 and ntag == "ok")
+	check("native path measured through MeasureCall", measured >= 1)
+	local nrows = Profiler:Report(true)
+	local nrow
+	for i = 1, #nrows do
+		if nrows[i].label == "n.add" then
+			nrow = nrows[i]
+		end
+	end
+	check("native path records engine time", nrow and nrow.totalMs == 2 and nrow.calls == 1)
+	check("native path records kept bytes", nrow and nrow.allocKB == 2 and nrow.retainedKB == 1, nrow and nrow.retainedKB)
+	Profiler:Stop(true)
+	C_AddOnProfiler.MeasureCall = nil
+	Profiler:PrintStack("n.add")
+
+	-- bench leaves the scanner consistent and stores results
+	local before = #scanner.slots
+	Profiler:Bench(3)
+	env.flushTimers()
+	check("bench keeps the slot count", #scanner.slots == before, #scanner.slots)
+	check("bench stored results", BagforgeDB.profile.bench and #BagforgeDB.profile.bench.results >= 2)
+	Profiler:HandleCommand("help")
+	Profiler:HandleCommand("bogus")
+	check("profiler command handler survives junk input", true)
+end
+
+-- 15. profiler window: sort and filter are pure, the window opens and refreshes
+do
+	local UI = ns.ProfilerUI
+	check("profiler window loaded", UI ~= nil)
+	local rows = {
+		{ label = "b", selfMs = 2, retainedKB = nil },
+		{ label = "a", selfMs = 5, retainedKB = 3 },
+		{ label = "c", selfMs = 2, retainedKB = 9 },
+	}
+	UI.SortRows(rows, "selfMs", true)
+	check("sort by number, biggest first, ties by name", rows[1].label == "a" and rows[2].label == "b" and rows[3].label == "c")
+	UI.SortRows(rows, "label", false)
+	check("sort by name, A to Z", rows[1].label == "a" and rows[3].label == "c")
+	UI.SortRows(rows, "retainedKB", true)
+	check("missing values sort last", rows[1].label == "c" and rows[3].label == "b", rows[3].label)
+	UI.SortRows(rows, "retainedKB", false)
+	check("missing values sort last ascending too", rows[3].label == "b", rows[3].label)
+	check("filter matches a substring", #UI.FilterRows(rows, "b") == 1 and #UI.FilterRows(rows, "") == 3)
+	check("number formats", UI.FormatValue("ms", 0.5) == "0.500" and UI.FormatValue("kb", nil) == "-" and UI.FormatValue("int", 7) == "7")
+
+	ns.Profiler:Start()
+	Items:Scan()
+	env.flushTimers()
+	local ok, err = pcall(function()
+		ns.Profiler:HandleCommand("")
+		UI:Refresh()
+		ns.Profiler:HandleCommand("window")
+		ns.Profiler:HandleCommand("")
+		UI:Refresh()
+	end)
+	check("window opens, refreshes and toggles without throwing", ok, err)
+	ns.Profiler:Stop(true)
+	check("window refresh after stop", pcall(function() UI:Open() UI:Refresh() end))
+end
+
+-- 16. unbound items must not build a tooltip every time they are classified
+do
+	local fetches = 0
+	-- Categories and ItemInfo cached the table at load, so patch it in place.
+	C_TooltipInfo.GetBagItem = function()
+		fetches = fetches + 1
+		return { lines = { {}, { type = Enum.TooltipDataLineType.ItemBinding, bonding = 0 } } }
+	end
+	ns.db.filters.warbound = true
+	ns.F.ClearItemInfoCache()
+	Items:Scan()
+	env.flushTimers()
+	fetches = 0
+	for i = 1, #scanner.slots do
+		ns:GetModule("Categories"):GetCategory(scanner.slots[i])
+	end
+	check("classifying resolved items builds no tooltip", fetches == 0, fetches)
+	local resolved = true
+	for i = 1, #scanner.slots do
+		if scanner.slots[i].bindResolved ~= true then
+			resolved = false
+		end
+	end
+	check("scan marks bind info as resolved", resolved)
+
+	-- the paint snapshots are reused, not rebuilt per call
+	local a = ns.Scan.SnapshotEntryPaint and ns.Scan.SnapshotEntryPaint(scanner.slots[1])
+	local b = ns.Scan.SnapshotEntryPaint and ns.Scan.SnapshotEntryPaint(scanner.slots[2])
+	check("entry paint snapshot is a shared scratch table", a ~= nil and a == b)
+end
+
+-- 17. single-slot lock refresh follows the slot, without the table API when IsLocked exists
+do
+	Items:Scan()
+	env.flushTimers()
+	local entry = scanner.slotsByKey[ns.F.SlotKey(0, 3)]
+	inv[0][3].locked = true
+	check("lock refresh finds the slot", scanner:RefreshLock(0, 3) == true)
+	check("slot reads as locked", entry.isLocked == true)
+	inv[0][3].locked = false
+	scanner:RefreshLock(0, 3)
+	check("slot reads as unlocked again", entry.isLocked == false)
+	check("unknown slot is reported, not invented", scanner:RefreshLock(0, 99) == false)
+	check("F.IsSlotLocked rejects nil", ns.F.IsSlotLocked(nil, nil) == false)
+	check("clearing recent flags walks occupied slots without the table API", pcall(function() ns.Recent:ClearBackpack() end))
+end
+
+-- 18. a lock change patches the button, it does not repaint it
+do
+	local ItemButton = ns:GetModule("ItemButton")
+	local okAcquire, parent = pcall(function() return ItemButton:Acquire() end)
+	check("item button acquired headless", okAcquire and parent ~= nil, parent)
+	if okAcquire and parent and parent.button then
+		local paints = 0
+		parent.button.SetHasItem = function() paints = paints + 1 end
+		-- Headless buttons are catch-all dummies, so give the paint state real tables
+		-- (an absent field would otherwise read back as a dummy, not nil).
+		rawset(parent, "_paintSnap", false)
+		rawset(parent, "_paintStore", {})
+		local entry = scanner.slotsByKey[ns.F.SlotKey(0, 3)]
+		entry.isLocked = false
+		parent:SetItemEntry(entry)
+		check("first paint runs", paints == 1, paints)
+		parent:SetItemEntry(entry)
+		check("unchanged entry does not repaint", paints == 1, paints)
+		entry.isLocked = true
+		parent:SetItemEntry(entry)
+		check("lock change does not repaint", paints == 1, paints)
+		check("lock change is remembered", parent._paintSnap.isLocked == true)
+		entry.isLocked = false
+		parent:SetItemEntry(entry)
+		check("unlock does not repaint either", paints == 1, paints)
+		entry.count = (entry.count or 1) + 1
+		parent:SetItemEntry(entry)
+		check("a real change still repaints", paints == 2, paints)
+		entry.count = entry.count - 1
+
+		-- clearing a button about to be pooled must not refresh context or cooldown
+		local ctx, cd = 0, 0
+		parent.button.UpdateItemContextMatching = function() ctx = ctx + 1 end
+		parent.button.UpdateCooldown = function() cd = cd + 1 end
+		parent:ClearItem()
+		check("clear skips the context and cooldown refresh", ctx == 0 and cd == 0, ctx .. "," .. cd)
+		parent:SetItemEntry(entry)
+		check("repaint after clear still refreshes both", ctx == 1 and cd == 1, ctx .. "," .. cd)
+	end
+end
+
+-- 19. bank session: item context refresh is coalesced, the panel type is set once and before Show
+do
+	local Session = ns.BankSession
+	local triggers = 0
+	ItemButtonUtil.TriggerEvent = function() triggers = triggers + 1 end
+	ItemButtonUtil.Event = { ItemContextChanged = 1 }
+	for _ = 1, 5 do
+		Session:RefreshItemContext()
+	end
+	check("item context waits for the trailing pass", triggers == 0, triggers)
+	env.flushTimers()
+	check("five refresh requests run one pass", triggers == 1, triggers)
+	Session:RefreshItemContext()
+	env.flushTimers()
+	check("a later request runs again", triggers == 2, triggers)
+
+	local log, activeType = {}, nil
+	local panel = BankPanel
+	panel.SetAlpha, panel.EnableMouse, panel.EnableKeyboard = function() end, function() end, function() end
+	panel.AutoDepositFrame, panel.Header = nil, nil
+	panel.SetBankType = function(_, t) activeType = t log[#log + 1] = "type" end
+	panel.GetActiveBankType = function() return activeType end
+	panel.Show = function() log[#log + 1] = "show" end
+	local view = { bankType = 2 }
+	Session:EnsureBankPanel(view)
+	check("type is set before the panel is shown", log[1] == "type" and log[2] == "show", table.concat(log, ","))
+	Session:EnsureBankPanel(view)
+	check("same type is not set again", #log == 3 and log[3] == "show", table.concat(log, ","))
+	view.bankType = 3
+	Session:EnsureBankPanel(view)
+	check("a different type is set", log[4] == "type" and activeType == 3, table.concat(log, ","))
+end
+
+-- 20. IsSlotLocked must survive C_Item.IsLocked raising on an empty slot
+do
+	local origIsLocked, origExists = C_Item.IsLocked, C_Item.DoesItemExist
+	C_Item.IsLocked = function() error("Usage: local isLocked = C_Item.IsLocked(itemLocation)", 0) end
+
+	C_Item.DoesItemExist = function() return false end
+	local ok, locked = pcall(ns.F.IsSlotLocked, 0, 99)
+	check("empty slot reads unlocked, no throw", ok and locked == false, locked)
+
+	-- the client says the item exists but IsLocked still raises: fall back to the table API
+	C_Item.DoesItemExist = function() return true end
+	inv[0][3].locked = true
+	ok, locked = pcall(ns.F.IsSlotLocked, 0, 3)
+	check("a refused location falls back to the table API", ok and locked == true, locked)
+	inv[0][3].locked = false
+
+	C_Item.IsLocked, C_Item.DoesItemExist = origIsLocked, origExists
+end
+
+-- 21. item level reads C_Item.GetCurrentItemLevel on a shared location
+do
+	local info = ns:GetModule("ItemInfo")
+	local origLevel, origExists = C_Item.GetCurrentItemLevel, C_Item.DoesItemExist
+	local asked = 0
+	C_Item.GetCurrentItemLevel = function() asked = asked + 1 return 321 end
+	C_Item.DoesItemExist = function() return true end
+	local entry = { bag = 0, slot = 4, itemID = 102, classID = 4, hyperlink = "|cff|Hitem:102::::::::999|h[Probe Helm]|h|r" }
+	check("ilvl comes from C_Item.GetCurrentItemLevel", info:GetItemLevel(entry) == 321 and asked == 1, asked)
+	check("ilvl is cached per link", info:GetItemLevel(entry) == 321 and asked == 1, asked)
+	C_Item.DoesItemExist = function() return false end
+	local gone = { bag = 0, slot = 4, itemID = 102, classID = 4, hyperlink = "|cff|Hitem:102::::::::1000|h[Gone]|h|r" }
+	local ok = pcall(info.GetItemLevel, info, gone)
+	check("an empty slot does not throw", ok)
+	C_Item.GetCurrentItemLevel, C_Item.DoesItemExist = origLevel, origExists
+end
+
 print(("%d passed, %d failed"):format(passed, failed))
 os.exit(failed == 0 and 0 or 1)

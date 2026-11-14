@@ -48,6 +48,9 @@ Core\API.lua
 # User-facing entry point (slash command) and the Settings-menu options panel.
 Core\Commands.lua
 Core\Options.lua
+Core\Diagnostics.lua
+Core\Profiler.lua
+Core\ProfilerUI.lua
 
 # ----------------------------------------------------------------------------
 # Modules. Categories annotate scanned items, the data layer scans the bags,

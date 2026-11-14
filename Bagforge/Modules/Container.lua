@@ -314,6 +314,8 @@ end
 -- doesn't duplicate closures per panel.
 local methods = {}
 methods.__index = methods
+-- Exposed so the profiler (Core/Profiler.lua) can time the instance methods.
+Container.Methods = methods
 
 -- ---------------------------------------------------------------------------
 -- Construction
@@ -587,6 +589,35 @@ local function CancelBatchLayout(container)
 	end
 end
 
+-- Hoisted so queuing a batch never allocates a fresh closure; the shared
+-- frame reuses this single handler for the lifetime of the addon.
+local function BatchLayoutOnUpdate()
+	if InCombatLockdown() then
+		for i = #layoutBatchPending, 1, -1 do
+			local panel = layoutBatchPending[i]
+			CancelBatchLayout(panel)
+			local itemButton = ns:GetModule("ItemButton")
+			if itemButton and itemButton.FlagCombatLayoutPending then
+				itemButton:FlagCombatLayoutPending()
+			end
+		end
+		layoutBatchFrame:SetScript("OnUpdate", nil)
+		return
+	end
+	local index = 1
+	while index <= #layoutBatchPending do
+		local panel = layoutBatchPending[index]
+		if panel:_AdvanceLayoutBatch() then
+			table.remove(layoutBatchPending, index)
+		else
+			index = index + 1
+		end
+	end
+	if #layoutBatchPending == 0 then
+		layoutBatchFrame:SetScript("OnUpdate", nil)
+	end
+end
+
 local function QueueBatchLayout(container)
 	for i = 1, #layoutBatchPending do
 		if layoutBatchPending[i] == container then
@@ -597,32 +628,7 @@ local function QueueBatchLayout(container)
 	if not layoutBatchFrame then
 		layoutBatchFrame = CreateFrame("Frame")
 	end
-	layoutBatchFrame:SetScript("OnUpdate", function()
-		if InCombatLockdown() then
-			for i = #layoutBatchPending, 1, -1 do
-				local panel = layoutBatchPending[i]
-				CancelBatchLayout(panel)
-				local itemButton = ns:GetModule("ItemButton")
-				if itemButton and itemButton.FlagCombatLayoutPending then
-					itemButton:FlagCombatLayoutPending()
-				end
-			end
-			layoutBatchFrame:SetScript("OnUpdate", nil)
-			return
-		end
-		local i = 1
-		while i <= #layoutBatchPending do
-			local panel = layoutBatchPending[i]
-			if panel:_AdvanceLayoutBatch() then
-				table.remove(layoutBatchPending, i)
-			else
-				i = i + 1
-			end
-		end
-		if #layoutBatchPending == 0 then
-			layoutBatchFrame:SetScript("OnUpdate", nil)
-		end
-	end)
+	layoutBatchFrame:SetScript("OnUpdate", BatchLayoutOnUpdate)
 end
 
 --- When the combat pool is dry, repurpose a button still held from the previous

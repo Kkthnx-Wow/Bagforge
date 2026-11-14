@@ -292,6 +292,11 @@ local function IsWarbound(entry)
 	if entry.bindLabel ~= nil then
 		return entry.bindLabel == "WuE"
 	end
+	-- ItemInfo looked and found no binding at all. Without this every unbound item
+	-- (most reagents and consumables) fell through to a tooltip build per classify.
+	if entry.bindResolved then
+		return false
+	end
 	-- Fallback: ItemInfo wasn't active or item data wasn't cached at scan time.
 	-- Mirror ItemInfo:GetBindLabel's two-stage detection so the filter still works
 	-- when the module is unavailable. We cache the positive result on the entry so

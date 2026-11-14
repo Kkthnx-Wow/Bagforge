@@ -48,7 +48,7 @@
 	  RefreshDisplayFields   - Pawn/ItemInfo overlay paint
 	  RefreshUnusable        - unusable tint paint
 	  RefreshQuestState      - quest overlay + quest-driven category
-	  RefreshLock            - single-slot lock overlay (PatchSlot)
+	  RefreshLock            - single-slot lock overlay (slotsByKey)
 
 	Full Run() reserved for: login, BAG_CONTAINER_UPDATE, stack-merge disable,
 	needsFinalize fallback, _scanDirty open.
@@ -74,6 +74,15 @@ local wipe = wipe
 local type = type
 local pcall = pcall
 local C_Timer = C_Timer
+
+--- Millisecond clock. Declared up here because the per-phase timers in
+--- _Build and _FinalizeBuild (defined earlier in the file than the rebuild
+--- timing helpers) need it; GetTimePreciseSec is the same clock the frame
+--- budget in Functions.lua uses, GetTime is the fallback.
+local function NowMs()
+	local now = GetTimePreciseSec and GetTimePreciseSec() or GetTime()
+	return now * 1000
+end
 
 local ITEM_CLASS_WEAPON = Enum.ItemClass.Weapon
 local ITEM_CLASS_ARMOR = Enum.ItemClass.Armor
@@ -157,11 +166,12 @@ end
 --- when Pawn/ItemInfo toggles change.
 local function ApplyDisplayFields(entry, itemInfo)
 	if itemInfo then
-		entry.bindLabel = itemInfo:GetBindLabel(entry)
+		entry.bindLabel, entry.bindResolved = itemInfo:GetBindLabel(entry)
 		entry.ilvl = itemInfo:GetItemLevel(entry)
 		CacheUnusable(entry, itemInfo)
 	else
 		entry.bindLabel = nil
+		entry.bindResolved = nil
 		entry.ilvl = nil
 		entry.isUnusable = false
 	end
@@ -178,12 +188,13 @@ local function ApplyDisplayFields(entry, itemInfo)
 		entry.showBindLabel = entry.bindLabel
 	end
 
+	-- ns.PawnIsUpgrade is only published while Pawn is installed AND enabled, so
+	-- the per-slot path is one table hit when it isn't. Calling the module
+	-- directly meant a module lookup plus ready/availability checks on every
+	-- single slot even with no Pawn installed.
 	entry.isUpgrade = false
-	if ns.db and ns.db.pawn and ns.db.pawn.enable then
-		local pawn = ns:GetModule("Pawn")
-		if pawn and pawn.IsUpgrade and entry.hyperlink then
-			entry.isUpgrade = pawn:IsUpgrade(entry.hyperlink) and true or false
-		end
+	if ns.PawnIsUpgrade and entry.hyperlink then
+		entry.isUpgrade = ns.PawnIsUpgrade(entry.hyperlink) and true or false
 	end
 
 	-- Grey out junk: desaturate poor-quality / custom-junk icons.
@@ -880,6 +891,9 @@ local function PopulateEntryFromSlot(self, entry, bag, slot, ctx, info)
 	entry.invSlotID = inv or 0
 
 	entry.sellPrice = GetSellPrice(itemID, hyperlink)
+	-- Pooled entry: drop the previous item's cached bag tooltip before the
+	-- display fields below ask for it again (ItemInfo memoises one per slot).
+	entry._tooltipData = nil
 	ApplyDisplayFields(entry, ctx.itemInfo)
 
 	local fastMeta = ctx.fastMeta and GetFastMeta(ctx.fastMeta, itemID)
@@ -893,7 +907,9 @@ local function PopulateEntryFromSlot(self, entry, bag, slot, ctx, info)
 	if ns.Search and ns.Search.IndexEntry then
 		ns.Search.IndexEntry(entry)
 	end
-	local categories = ns:GetModule("Categories")
+	-- ctx already resolved the Categories module once per build; looking it up
+	-- again per slot was a needless lookup in the hottest loop.
+	local categories = ctx.categories
 	entry.category = categories and categories:GetCategory(entry) or L["Other"]
 	entry.categoryOrder = categories and categories:GetOrder(entry.category) or 100
 	return true
@@ -968,10 +984,23 @@ function meta:_Build(bags)
 	wipe(self.slots)
 	self:_ResetChangeset()
 	local buildCtx = PrepareBuildCtx(self, true)
+	if buildCtx.itemInfo and buildCtx.itemInfo.ResetTooltipStats then
+		buildCtx.itemInfo:ResetTooltipStats()
+	end
+	-- Per-phase cost of this build. Wiped each full build; Diagnostics only
+	-- reads it, nothing in the scan path depends on it.
+	local phases = self._phaseMs or {}
+	self._phaseMs = phases
+	wipe(phases)
+	local t0 = NowMs()
 	for _, bag in ipairs(bags) do
 		ScanBagIntoSlots(self, bag, buildCtx)
 	end
+	phases.scan = NowMs() - t0
+	phases.tooltips = buildCtx.itemInfo and buildCtx.itemInfo.tooltipFetches or 0
+	t0 = NowMs()
 	local free, total = CountBagFreeAndTotal(bags)
+	phases.count = NowMs() - t0
 	self:_FinalizeBuild(free, total)
 	return self
 end
@@ -1066,20 +1095,26 @@ local function MoveEntryBetweenSections(self, entry, fromCat, toCat, junkCategor
 	return true
 end
 
+-- One scratch table, refilled per call. Every caller takes the snapshot, mutates
+-- the entry and compares before it snapshots again, so nothing holds two at once.
+-- A fresh table per slot was a visible share of the allocation in a rescan.
+local paintScratch = {}
+
 local function SnapshotEntryPaint(entry)
-	return {
-		name = entry.name,
-		icon = entry.icon,
-		quality = entry.quality,
-		showIlvl = entry.showIlvl,
-		showBindLabel = entry.showBindLabel,
-		isUpgrade = entry.isUpgrade,
-		isUnusable = entry.isUnusable,
-		showGreyJunk = entry.showGreyJunk,
-		classID = entry.classID,
-		subClassID = entry.subClassID,
-	}
+	local snap = paintScratch
+	snap.name = entry.name
+	snap.icon = entry.icon
+	snap.quality = entry.quality
+	snap.showIlvl = entry.showIlvl
+	snap.showBindLabel = entry.showBindLabel
+	snap.isUpgrade = entry.isUpgrade
+	snap.isUnusable = entry.isUnusable
+	snap.showGreyJunk = entry.showGreyJunk
+	snap.classID = entry.classID
+	snap.subClassID = entry.subClassID
+	return snap
 end
+Scan.SnapshotEntryPaint = SnapshotEntryPaint
 
 local function EntryPaintChanged(snap, entry)
 	return entry.name ~= snap.name
@@ -1134,19 +1169,48 @@ local function FinalizeOverlayChangeset(changeset, opts)
 	end
 end
 
+--- Rebuild the O(1) bag/slot and itemID indexes. The per-itemID arrays are
+--- pooled on the scanner (`_idLists`) and only the arrays handed out by the
+--- previous rebuild are wiped, so an incremental diff no longer allocates one
+--- fresh table per distinct itemID on every bag update.
 local function RebuildLookupTables(self)
-	wipe(self.slotsByKey)
-	wipe(self.entriesByItemID)
-	for i = 1, #self.slots do
-		local e = self.slots[i]
-		self.slotsByKey[e.key] = e
+	local byKey = self.slotsByKey
+	wipe(byKey)
+
+	local lists = self._idLists
+	if not lists then
+		lists = {}
+		self._idLists = lists
+		self._idUsed = {}
+	end
+	local used = self._idUsed
+	for i = 1, #used do
+		wipe(lists[used[i]])
+	end
+	wipe(used)
+
+	local byID = self.entriesByItemID
+	wipe(byID)
+
+	local slots = self.slots
+	for i = 1, #slots do
+		local e = slots[i]
+		byKey[e.key] = e
 		local id = e.itemID
 		if id then
-			local list = self.entriesByItemID[id]
+			local list = lists[id]
 			if not list then
 				list = {}
-				self.entriesByItemID[id] = list
+				lists[id] = list
 			end
+			-- Register once per rebuild, not only when the array is created: a
+			-- pooled array outlives the rebuild that made it, so keying this off
+			-- creation leaves _idUsed empty on every later pass and the next
+			-- rebuild stops wiping the very arrays it hands out.
+			if not byID[id] then
+				used[#used + 1] = id
+			end
+			byID[id] = list
 			list[#list + 1] = e
 		end
 	end
@@ -1350,15 +1414,24 @@ function meta:_BuildSlotDiff(bags, dirtyBags, dirtySlotKeys)
 		end
 	end
 
-	local free, total = CountBagFreeAndTotal(bags)
-	self.freeSlots = free
-	self.totalSlots = total
+	-- Free/total and the lookup indexes only move when a slot was added,
+	-- removed or changed item. A display-only or lock-only diff is the common
+	-- case, and it must not pay for a full slot walk plus an index rebuild.
+	local structureMoved = changeset.structureChanged or changeset.needsFinalize
+	local free, total = self.freeSlots or 0, self.totalSlots or 0
+	if structureMoved then
+		free, total = CountBagFreeAndTotal(bags)
+		self.freeSlots = free
+		self.totalSlots = total
+	end
 
 	if changeset.needsFinalize then
 		self:_FinalizeBuild(free, total)
 		changeset.incremental = false
 	else
-		RebuildLookupTables(self)
+		if structureMoved then
+			RebuildLookupTables(self)
+		end
 		if changeset.dirtyCategories[junkCategory] then
 			self:RecomputeJunkSectionValue()
 		end
@@ -1382,34 +1455,36 @@ end
 
 --- Sort, section, and rebuild lookup tables after the slot list is populated.
 function meta:_FinalizeBuild(free, total)
+	local phases = self._phaseMs
+	local t0 = NowMs()
 	if ns.db and ns.db.organize and ns.db.organize.stackMerge then
 		self:_MergeStacks()
 	end
+	if phases then
+		phases.merge = NowMs() - t0
+	end
 
+	t0 = NowMs()
 	if not pcall(tsort, self.slots, CompareEntries) then
 		pcall(tsort, self.slots, SafeCompare)
 	end
+	if phases then
+		phases.sort = NowMs() - t0
+	end
+
+	t0 = NowMs()
 	self:_BuildSections()
+	if phases then
+		phases.sections = NowMs() - t0
+	end
 
 	self.freeSlots = free
 	self.totalSlots = total
 
-	local byKey = self.slotsByKey
-	wipe(byKey)
-	local byID = self.entriesByItemID
-	wipe(byID)
-	for i = 1, #self.slots do
-		local e = self.slots[i]
-		byKey[e.key] = e
-		local id = e.itemID
-		if id then
-			local list = byID[id]
-			if not list then
-				list = {}
-				byID[id] = list
-			end
-			list[#list + 1] = e
-		end
+	t0 = NowMs()
+	RebuildLookupTables(self)
+	if phases then
+		phases.lookup = NowMs() - t0
 	end
 end
 
@@ -1605,7 +1680,47 @@ end
 --- and rebuild exactly once when the data arrives. Pass `dirtyBags` (bagID -> true)
 --- to rescan only changed bags when a prior build exists (incremental path).
 --- Optional `dirtySlotKeys` limits the diff to explicit slot keys (from
---- CollectDirtySlotKeys or PatchSlot).
+--- CollectDirtySlotKeys).
+-- ---------------------------------------------------------------------------
+-- Rebuild timing
+--   Every rebuild (full, incremental, or the late pass that re-runs once item
+--   data arrives) is timed so /bf diag can report what a scan really costs in
+--   the live client instead of guessing. GetTimePreciseSec is the same clock
+--   the frame budget in Functions.lua uses; GetTime is only a fallback.
+--
+--   Single-slot PatchSlot builds are deliberately excluded: they are not a
+--   rebuild, and folding them in would bury the real rebuild cost under
+--   hundreds of sub-millisecond lock/quest patches.
+-- ---------------------------------------------------------------------------
+local function RecordRebuildTime(self, kind, startedAt)
+	local elapsed = NowMs() - startedAt
+	if elapsed < 0 then
+		elapsed = 0
+	end
+	self.lastRebuildMs = elapsed
+	self.lastRebuildKind = kind
+	self.rebuildCount = (self.rebuildCount or 0) + 1
+	self.rebuildTotalMs = (self.rebuildTotalMs or 0) + elapsed
+	if elapsed > (self.rebuildPeakMs or 0) then
+		self.rebuildPeakMs = elapsed
+	end
+end
+
+--- Run one build pass and record how long it took.
+local function RunBuild(self, bags, dirtyBags, dirtySlotKeys, usePartial, suffix)
+	local startedAt = NowMs()
+	if usePartial then
+		self:_BuildSlotDiff(bags, dirtyBags, dirtySlotKeys)
+	else
+		self:_Build(bags)
+	end
+	local kind = usePartial and "incremental" or "full"
+	if suffix then
+		kind = kind .. " " .. suffix
+	end
+	RecordRebuildTime(self, kind, startedAt)
+end
+
 function meta:Run(bags, onComplete, dirtyBags, dirtySlotKeys)
 	self._scanGen = (self._scanGen or 0) + 1
 	local gen = self._scanGen
@@ -1615,11 +1730,7 @@ function meta:Run(bags, onComplete, dirtyBags, dirtySlotKeys)
 	end
 
 	local usePartial = (dirtySlotKeys and next(dirtySlotKeys) or dirtyBags and next(dirtyBags)) and #self.slots > 0
-	if usePartial then
-		self:_BuildSlotDiff(bags, dirtyBags, dirtySlotKeys)
-	else
-		self:_Build(bags)
-	end
+	RunBuild(self, bags, dirtyBags, dirtySlotKeys, usePartial)
 	self:_ScheduleScanComplete(onComplete)
 
 	if not (HasAsyncLoad and self._incomplete) then
@@ -1661,11 +1772,7 @@ function meta:Run(bags, onComplete, dirtyBags, dirtySlotKeys)
 		if itemInfo and itemInfo.InvalidateUnusableCaches then
 			itemInfo:InvalidateUnusableCaches()
 		end
-		if usePartial then
-			self:_BuildSlotDiff(bags, lateBags, lateKeys)
-		else
-			self:_Build(bags)
-		end
+		RunBuild(self, bags, lateBags, lateKeys, usePartial, "late")
 		self:_ScheduleScanComplete(onComplete)
 	end)
 
@@ -1713,6 +1820,24 @@ function meta:RefreshLocks()
 	end
 end
 
+--- Lock state only. A lock event never changes quest state, so the single-slot
+--- path skips the two table-returning container calls RefreshEntryLiveFields makes.
+local function RefreshEntryLock(entry)
+	local merged = entry._mergedSlots
+	if merged and #merged > 0 then
+		local locked = false
+		for i = 1, #merged do
+			if F.IsSlotLocked(merged[i].bag, merged[i].slot) then
+				locked = true
+				break
+			end
+		end
+		entry.isLocked = locked
+		return
+	end
+	entry.isLocked = F.IsSlotLocked(entry.bag, entry.slot)
+end
+
 --- Refresh lock state for one existing entry. Returns true if the slot was in
 --- this scanner, so callers can skip a full display repaint on lock spam.
 --- O(1) via the slotsByKey hash built at the end of _Build.
@@ -1739,7 +1864,7 @@ function meta:RefreshLock(bag, slot)
 	if not entry then
 		return false
 	end
-	RefreshEntryLiveFields(entry)
+	RefreshEntryLock(entry)
 	return true
 end
 
